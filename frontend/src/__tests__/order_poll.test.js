@@ -12,6 +12,7 @@ import {
   extractCreatedId,
   shouldKeepPolling,
   deadlineUnixFromDays,
+  pollUntilOrderLeavesStatus,
 } from '../orderPoll.js';
 
 function assert(cond, msg) {
@@ -31,7 +32,7 @@ const order = {
   damaged_payout_to_seller: '700',
 };
 
-function runOrderPollTests() {
+async function runOrderPollTests() {
   console.log('Starting order poll / list tests...');
 
   assertEqual(studioRpcUrl(undefined), STUDIO_RPC, 'node uses Studio RPC');
@@ -69,6 +70,20 @@ function runOrderPollTests() {
   assert(shouldKeepPolling({ previousCount: 0, currentCount: 0, rows: [] }) === true, 'keep polling while empty');
   assert(shouldKeepPolling({ previousCount: 0, currentCount: 1, rows: [order] }) === false, 'stop when list grows');
 
+  let n = 0;
+  const settled = await pollUntilOrderLeavesStatus({
+    fromStatus: 'DELIVERY_REPORTED',
+    attempts: 5,
+    intervalMs: 1,
+    sleep: async () => {},
+    loadOrder: async () => {
+      n += 1;
+      return n < 3 ? { status: 'DELIVERY_REPORTED' } : { status: 'RESOLVED', verdict: 'DAMAGED' };
+    },
+  });
+  assert(settled.verdict === 'DAMAGED', 'poll stops when status leaves DELIVERY_REPORTED');
+  assert(n === 3, 'poll retries until status changes');
+
   const d7 = deadlineUnixFromDays(7);
   const d14 = deadlineUnixFromDays(14);
   assert(d14 - d7 === 7n * 86400n, 'deadline presets differ by exact whole days');
@@ -76,4 +91,7 @@ function runOrderPollTests() {
   console.log('All order poll / list tests passed.');
 }
 
-runOrderPollTests();
+runOrderPollTests().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

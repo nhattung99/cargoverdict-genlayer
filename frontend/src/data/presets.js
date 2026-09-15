@@ -6,11 +6,19 @@ export const DEADLINE_PRESETS = [
   { days: 30, label: '30 days' },
 ];
 
-export const EXAMPLE_ORIGIN_URL = 'https://example.com/origin-pack.jpg';
-export const EXAMPLE_DELIVERY_URL = 'https://example.com/delivery-unbox.jpg';
+export const EXAMPLE_ORIGIN_URL = 'https://example.com';
+export const EXAMPLE_DELIVERY_URL = 'https://example.org';
 export const EXAMPLE_REFERENCE_URLS = [
-  'https://tracking.carrier.example/shipment/ABC123',
-  'https://customs.example.gov/lookup/ABC123',
+  'https://en.wikipedia.org/wiki/Cargo',
+  'https://en.wikipedia.org/wiki/Freight_transport',
 ];
 
 export const GOODS_HINT = 'Factory-new industrial sewing machines, 4 units, packed in sealed wooden crates.';
+
+/** Ready-to-submit demo order. Seller address is left blank so buyer pastes a second wallet. */
+export const SAMPLE_ORDER = {
+  goods: 'Factory-new Juki industrial sewing machines, 4 units, packed in sealed wooden crates with foam corners. Serial tags visible on crate photos. Destination: Ho Chi Minh City warehouse.',
+  escrow: '1',
+  damaged: '0.7',
+  deadlineDays: 14,
+};

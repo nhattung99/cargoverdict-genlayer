@@ -180,15 +180,15 @@ export async function loadOrders(client, fromAddress) {
   return { rows, count, listError: rows.length ? null : listError };
 }
 
-export const waitForTx = async (client, hash) => {
+export const waitForTx = async (client, hash, { retries = 40, interval = 2000, status = TransactionStatus.ACCEPTED } = {}) => {
   if (!hash) return null;
   if (client && typeof client.waitForTransactionReceipt === 'function') {
     try {
       return await client.waitForTransactionReceipt({
         hash,
-        status: TransactionStatus.ACCEPTED,
-        retries: 40,
-        interval: 2000,
+        status,
+        retries,
+        interval,
       });
     } catch (err) {
       console.warn('wait ACCEPTED note:', err);
@@ -197,12 +197,41 @@ export const waitForTx = async (client, hash) => {
       return await client.waitForTransactionReceipt({
         hash,
         status: TransactionStatus.FINALIZED,
-        retries: 20,
-        interval: 2000,
+        retries: 40,
+        interval,
       });
     } catch (err) {
       console.warn('wait FINALIZED note:', err);
     }
   }
   return hash;
+};
+
+const pickExecResult = (receipt) => {
+  if (!receipt || typeof receipt !== 'object') return '';
+  const raw =
+    receipt.executionResult ??
+    receipt.execution_result ??
+    receipt.txExecutionResultName ??
+    receipt.genvmResult ??
+    receipt.genvm_result ??
+    receipt.result ??
+    receipt.status;
+  return String(raw || '').toLowerCase();
+};
+
+export const receiptLooksFailed = (receipt) => {
+  if (!receipt || typeof receipt !== 'object') return false;
+  const exec = pickExecResult(receipt);
+  if (
+    exec.includes('error') ||
+    exec.includes('fail') ||
+    exec.includes('revert') ||
+    exec.includes('rollback')
+  ) {
+    return true;
+  }
+  const nested = receipt.genvm || receipt.execution || receipt.receipt;
+  if (nested && nested !== receipt) return receiptLooksFailed(nested);
+  return false;
 };

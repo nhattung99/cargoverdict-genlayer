@@ -161,6 +161,23 @@ export async function pollUntilListed({
   return last;
 }
 
+export async function pollUntilOrderLeavesStatus({
+  loadOrder,
+  fromStatus,
+  attempts = 36,
+  intervalMs = 5000,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+}) {
+  let last = null;
+  for (let i = 0; i < attempts; i += 1) {
+    last = await loadOrder();
+    const status = String(last?.status || '');
+    if (status && status !== fromStatus) return last;
+    if (i < attempts - 1) await sleep(intervalMs);
+  }
+  return last;
+}
+
 export function deadlineUnixFromDays(days) {
   const nowSec = BigInt(Date.now()) / 1000n;
   return nowSec + BigInt(days) * 86400n;

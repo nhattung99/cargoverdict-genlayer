@@ -27,10 +27,13 @@ import {
   parseGenToWei,
   formatWeiToGen,
   sanitizeGenInput,
+  txExplorerUrl,
+  receiptLooksFailed,
 } from './genlayerClient.js';
 import {
   extractCreatedId,
   pollUntilListed,
+  pollUntilOrderLeavesStatus,
   sameAddress,
   resolveReadAccount,
   deadlineUnixFromDays,
@@ -50,6 +53,7 @@ import {
   EXAMPLE_DELIVERY_URL,
   EXAMPLE_REFERENCE_URLS,
   GOODS_HINT,
+  SAMPLE_ORDER,
 } from './data/presets.js';
 
 const shortAddr = (a) => {
@@ -254,6 +258,7 @@ export default function App() {
     setTxHash(null);
     if (resolving) setResolvingId(resolving);
     setLoading(true);
+    const isAi = fnName === 'resolve_order';
     try {
       await ensureStudioNetwork();
       const client = getWriteClient(account);
@@ -266,7 +271,36 @@ export default function App() {
         value: value === undefined ? 0n : value,
       });
       setTxHash(hash);
-      await waitForTx(client, hash);
+      const receipt = await waitForTx(client, hash, isAi
+        ? { retries: 90, interval: 5000 }
+        : { retries: 40, interval: 2000 });
+
+      if (isAi) {
+        const fromStatus = 'DELIVERY_REPORTED';
+        const settled = await pollUntilOrderLeavesStatus({
+          fromStatus,
+          attempts: 36,
+          intervalMs: 5000,
+          loadOrder: async () => {
+            await fetchOrders({ silent: true });
+            return fetchDetail(String(args[0]));
+          },
+        });
+        const status = String(settled?.status || '');
+        if (!status || status === fromStatus) {
+          const explorer = txExplorerUrl(hash);
+          throw new Error(
+            `AI consensus did not write a verdict yet. Keep this tab open and click Refresh in 1–2 minutes. ` +
+            `If it stays on DELIVERY_REPORTED, GenVM likely rolled back — usually because a URL could not be fetched ` +
+            `(fake *.example hosts fail). Create a new order using public pages such as example.com and Wikipedia. ` +
+            `Explorer: ${explorer}`
+          );
+        }
+        if (receiptLooksFailed(receipt) && status === fromStatus) {
+          throw new Error(`AI transaction failed in GenVM. Explorer: ${txExplorerUrl(hash)}`);
+        }
+        return hash;
+      }
 
       const previousCount = orders.length;
       const listed = await pollUntilListed({
@@ -418,7 +452,10 @@ export default function App() {
       {errorMessage && <div className="err-banner">{errorMessage}</div>}
       {txHash && (
         <div className="ok-banner mono">
-          Transaction submitted. Hash: {String(txHash)}
+          Transaction submitted.{' '}
+          <a href={txExplorerUrl(txHash)} target="_blank" rel="noreferrer">
+            Open in Explorer
+          </a>
         </div>
       )}
 
@@ -438,6 +475,21 @@ export default function App() {
         <form className="card" onSubmit={handleCreate}>
           <h2>Lock GEN against a shipment</h2>
           <p className="hint">Buyer funds escrow now. Two fixed amounts are agreed up front — full payment if intact, a smaller fixed payout if damaged. The contract never computes a percentage.</p>
+          <div className="chips" style={{ marginBottom: '1rem' }}>
+            <button
+              type="button"
+              className="chip"
+              onClick={() => {
+                setGoods(SAMPLE_ORDER.goods);
+                setEscrowStr(SAMPLE_ORDER.escrow);
+                setDamagedStr(SAMPLE_ORDER.damaged);
+                setDeadlineDays(SAMPLE_ORDER.deadlineDays);
+              }}
+            >
+              Fill sewing-machine sample
+            </button>
+          </div>
+          <p className="hint">Sample fills description, 1 GEN escrow, 0.7 GEN damaged payout, and a 14-day deadline. Paste the seller&apos;s wallet yourself — do not send GEN to a random address.</p>
 
           <div className="field">
             <label className="label">Goods description</label>
@@ -669,15 +721,20 @@ export default function App() {
                     )}
 
                     {o.status === 'DELIVERY_REPORTED' && (
-                      <button
-                        className="btn-ai"
-                        type="button"
-                        onClick={() => handleResolve(id)}
-                        disabled={loading || resolvingId === id}
-                      >
-                        {resolvingId === id ? <span className="spinner" /> : <Scale size={16} />}
-                        {resolvingId === id ? 'AI is adjudicating…' : 'Request AI adjudication'}
-                      </button>
+                      <>
+                        <p className="hint">
+                          AI consensus on studionet often takes 2–5 minutes. Keep this tab open. Use public http(s) pages the contract can fetch — fake hosts like tracking.carrier.example will roll the transaction back with no verdict.
+                        </p>
+                        <button
+                          className="btn-ai"
+                          type="button"
+                          onClick={() => handleResolve(id)}
+                          disabled={loading || resolvingId === id}
+                        >
+                          {resolvingId === id ? <span className="spinner" /> : <Scale size={16} />}
+                          {resolvingId === id ? 'AI is adjudicating — keep this tab open…' : 'Request AI adjudication'}
+                        </button>
+                      </>
                     )}
                   </div>
                 </article>
