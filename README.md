@@ -17,7 +17,7 @@ There is no percentage, no multiplication, and no rounding on money in the contr
 
 ## Live App
 
-_Pending Vercel production URL after deploy verification._
+https://cargoverdict-genlayer.vercel.app
 
 ## Deployed Contract
 
@@ -25,7 +25,7 @@ _Pending Vercel production URL after deploy verification._
 - **Address:** `0x2D2A351b6F0b3bf4339d9b51D9f8750C41c1CEf4`
 - **Explorer:** https://genlayer-explorer.vercel.app/address/0x2D2A351b6F0b3bf4339d9b51D9f8750C41c1CEf4
 
-Until an address is set, the frontend runs in preview mode (banner, no white crash). Writes stay disabled.
+If `VITE_CONTRACT_ADDRESS` is unset locally, the frontend still boots in preview mode (banner, no white crash) and writes stay disabled.
 
 ---
 
