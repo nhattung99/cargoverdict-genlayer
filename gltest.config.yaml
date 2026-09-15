@@ -1,0 +1,10 @@
+networks:
+  default: localnet
+  localnet:
+  studionet:
+    url: https://studio.genlayer.com/api
+    chain_type: studionet
+
+paths:
+  contracts: contracts
+  artifacts: artifacts

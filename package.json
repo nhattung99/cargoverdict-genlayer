@@ -1,0 +1,10 @@
+{
+  "name": "cargoverdict-genlayer",
+  "private": true,
+  "scripts": {
+    "build": "npm run build --prefix frontend",
+    "check:float": "node scripts/check-no-float-money.js",
+    "test:money": "node frontend/src/__tests__/unit_conversion.test.js",
+    "test:poll": "node frontend/src/__tests__/order_poll.test.js"
+  }
+}

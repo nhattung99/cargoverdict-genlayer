@@ -1,0 +1,10 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    {
+      "source": "/api/genlayer",
+      "destination": "https://studio.genlayer.com/api"
+    }
+  ]
+}
