@@ -17,13 +17,13 @@ There is no percentage, no multiplication, and no rounding on money in the contr
 
 ## Live App
 
-_Pending handoff — set after the operator deploys on studionet and we publish GitHub + Vercel._
+_Pending Vercel production URL after deploy verification._
 
 ## Deployed Contract
 
 - **Network:** studionet (GenLayer Studio hosted)
-- **Address:** _pending operator deploy (`Result: SUCCESS`)_
-- **Explorer:** _pending_
+- **Address:** `0x2D2A351b6F0b3bf4339d9b51D9f8750C41c1CEf4`
+- **Explorer:** https://genlayer-explorer.vercel.app/address/0x2D2A351b6F0b3bf4339d9b51D9f8750C41c1CEf4
 
 Until an address is set, the frontend runs in preview mode (banner, no white crash). Writes stay disabled.
 
@@ -138,9 +138,9 @@ Every money field is **wei / base units**, `bigint` on-chain and `BigInt` off-ch
 - Escrow GEN chips. Damaged-payout chips show a **computed GEN integer** for 50/70/80 (BigInt only).
 - Shipment deadline dropdown: 7 / 14 / 30 days.
 - Evidence URLs have a clipboard-paste button.
-- **Yêu cầu AI phân xử** loading state; verdict + reason + confidence + each side's GEN.
+- **Request AI adjudication** loading state; verdict + reason + confidence + each side's GEN.
 - `DISPUTED` → report delivery again. `PAYOUT_FAILED` → **Retry unpaid side only**, showing which flag is already paid.
-- Sticky banner: *Miễn phí sử dụng — chỉ tốn phí gas mạng GenLayer khi ký giao dịch. Không có phí nền tảng nào khác.*
+- Sticky banner: *Free to use — you only pay GenLayer network gas when you sign a transaction. There is no other platform fee.*
 - Wallet stays on **studionet**.
 
 ```bash

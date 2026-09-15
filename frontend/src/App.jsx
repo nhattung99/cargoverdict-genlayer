@@ -384,7 +384,7 @@ export default function App() {
   return (
     <div className="app">
       <div className="free-banner">
-        Miễn phí sử dụng — chỉ tốn phí gas mạng GenLayer khi ký giao dịch. Không có phí nền tảng nào khác.
+        Free to use — you only pay GenLayer network gas when you sign a transaction. There is no other platform fee.
       </div>
 
       {!hasContractAddress && (
@@ -676,7 +676,7 @@ export default function App() {
                         disabled={loading || resolvingId === id}
                       >
                         {resolvingId === id ? <span className="spinner" /> : <Scale size={16} />}
-                        {resolvingId === id ? 'AI is adjudicating…' : 'Yêu cầu AI phân xử'}
+                        {resolvingId === id ? 'AI is adjudicating…' : 'Request AI adjudication'}
                       </button>
                     )}
                   </div>
