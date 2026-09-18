@@ -13,6 +13,9 @@ import {
   shouldKeepPolling,
   deadlineUnixFromDays,
   pollUntilOrderLeavesStatus,
+  FLOW_STEPS,
+  flowCurrentStep,
+  nextActionHint,
 } from '../orderPoll.js';
 import {
   EXAMPLE_ORIGIN_URL,
@@ -98,6 +101,28 @@ async function runOrderPollTests() {
   assert(EXAMPLE_REFERENCE_URLS.length >= 2, 'need two independent reference examples');
   assert(EXAMPLE_ORIGIN_URL.startsWith('https://'), 'origin example is https');
   assert(EXAMPLE_DELIVERY_URL.startsWith('https://'), 'delivery example is https');
+
+  assertEqual(flowCurrentStep('AWAITING_SHIPMENT'), 'ship', 'created order waits on seller');
+  assertEqual(flowCurrentStep('SHIPPED'), 'report', 'shipped waits on buyer report');
+  assertEqual(flowCurrentStep('DELIVERY_REPORTED'), 'ai', 'reported waits on AI');
+  assertEqual(flowCurrentStep('RESOLVED'), 'done', 'resolved is finished');
+  assert(FLOW_STEPS.length === 4, 'four visible flow steps');
+
+  const buyerWait = nextActionHint({
+    status: 'AWAITING_SHIPMENT',
+    isBuyer: true,
+    isSeller: false,
+    seller: '0x20bd000000000000000000000000000000005988',
+  });
+  assert(buyerWait.title.toLowerCase().includes('seller'), 'buyer sees seller is next');
+  assert(buyerWait.body.includes('0x20bd'), 'buyer hint names the seller address');
+
+  const sellerTurn = nextActionHint({
+    status: 'AWAITING_SHIPMENT',
+    isBuyer: false,
+    isSeller: true,
+  });
+  assert(sellerTurn.title.toLowerCase().includes('confirm shipment'), 'seller sees confirm shipment');
 
   console.log('All order poll / list tests passed.');
 }

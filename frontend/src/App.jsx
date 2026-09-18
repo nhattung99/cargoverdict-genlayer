@@ -38,6 +38,9 @@ import {
   resolveReadAccount,
   deadlineUnixFromDays,
   formatDeadline,
+  FLOW_STEPS,
+  flowCurrentStep,
+  nextActionHint,
 } from './orderPoll.js';
 import {
   percentOfWei,
@@ -77,6 +80,28 @@ const verdictClass = (verdict) => {
 };
 
 const statusClass = (status) => `badge badge-${String(status || '').toLowerCase()}`;
+
+const FlowStrip = ({ status }) => {
+  const current = flowCurrentStep(status);
+  const indexOf = { create: 0, ship: 1, report: 2, ai: 3, done: 4 };
+  const currentIdx = indexOf[current] ?? 0;
+  return (
+    <ol className="flow-strip">
+      {FLOW_STEPS.map((step, i) => {
+        const done = currentIdx > i;
+        const isCurrent = currentIdx === i || (current === 'done' && step.id === 'ai');
+        return (
+          <li
+            key={step.id}
+            className={`flow-step${isCurrent ? ' current' : ''}${done ? ' done' : ''}`}
+          >
+            {step.label}
+          </li>
+        );
+      })}
+    </ol>
+  );
+};
 
 const formatUrlList = (arr) => {
   if (!Array.isArray(arr) || arr.length === 0) return '';
@@ -210,6 +235,20 @@ export default function App() {
       setErrorMessage(formatWalletError(err, 'Wallet connection failed'));
     }
   };
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.ethereum?.on) return undefined;
+    const onAccounts = (accs) => {
+      const next = Array.isArray(accs) && accs[0] ? accs[0] : null;
+      setAccount(next);
+    };
+    window.ethereum.on('accountsChanged', onAccounts);
+    return () => {
+      if (window.ethereum.removeListener) {
+        window.ethereum.removeListener('accountsChanged', onAccounts);
+      }
+    };
+  }, []);
 
   const fetchOrders = useCallback(async ({ silent = false } = {}) => {
     if (!hasContractAddress) {
@@ -357,6 +396,7 @@ export default function App() {
         escrowWei
       );
       setTab('orders');
+      setFilter('all');
     } catch (err) {
       setErrorMessage(formatWalletError(err, 'Create order failed'));
     }
@@ -631,6 +671,13 @@ export default function App() {
               const preview = settlementPreview(o);
               const escrow = weiFromOrderField(o.escrow_amount);
               const damaged = weiFromOrderField(o.damaged_payout_to_seller);
+              const hint = nextActionHint({
+                status: o.status,
+                isBuyer,
+                isSeller,
+                seller: o.seller,
+                buyer: o.buyer,
+              });
               return (
                 <article className="card" key={id}>
                   <div className="row-between">
@@ -639,6 +686,13 @@ export default function App() {
                       <p className="hint">{o.goods_description || '—'}</p>
                     </div>
                     <span className={statusClass(o.status)}>{o.status}</span>
+                  </div>
+
+                  <FlowStrip status={o.status} />
+
+                  <div className="next-box">
+                    <strong>{hint.title}</strong>
+                    <p className="hint">{hint.body}</p>
                   </div>
 
                   <div className="tier-grid" style={{ marginTop: '0.8rem' }}>
@@ -661,6 +715,9 @@ export default function App() {
                   <div className="chips" style={{ marginTop: '0.6rem' }}>
                     <button type="button" className="chip" onClick={() => copyText(id, id)}>
                       <Copy size={14} /> {copied === id ? 'Copied id' : 'Share order id'}
+                    </button>
+                    <button type="button" className="chip" onClick={() => copyText(`seller-${id}`, o.seller)}>
+                      <Copy size={14} /> {copied === `seller-${id}` ? 'Copied seller' : 'Copy seller address'}
                     </button>
                     {activeOrderId === id ? null : (
                       <button type="button" className="chip" onClick={() => { setActiveOrderId(id); fetchDetail(id); }}>
@@ -713,9 +770,12 @@ export default function App() {
                     )}
 
                     {o.status === 'AWAITING_SHIPMENT' && isBuyer && (
-                      <button className="btn-danger" type="button" onClick={() => handleExpiryRefund(id)} disabled={loading}>
-                        Claim no-shipment refund
-                      </button>
+                      <>
+                        <p className="hint">Claim no-shipment refund only after the ship-by time if the seller never confirms.</p>
+                        <button className="btn-danger" type="button" onClick={() => handleExpiryRefund(id)} disabled={loading}>
+                          Claim no-shipment refund
+                        </button>
+                      </>
                     )}
 
                     {(o.status === 'SHIPPED' || o.status === 'DISPUTED' || o.status === 'DELIVERY_REPORTED') && isBuyer && (

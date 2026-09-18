@@ -194,3 +194,69 @@ export function formatDeadline(unixStr) {
     return raw;
   }
 }
+
+export const FLOW_STEPS = [
+  { id: 'create', label: '1. Create' },
+  { id: 'ship', label: '2. Seller ships' },
+  { id: 'report', label: '3. Buyer reports' },
+  { id: 'ai', label: '4. AI verdict' },
+];
+
+export function flowCurrentStep(status) {
+  const s = String(status || '');
+  if (s === 'AWAITING_SHIPMENT') return 'ship';
+  if (s === 'SHIPPED' || s === 'DISPUTED') return 'report';
+  if (s === 'DELIVERY_REPORTED') return 'ai';
+  if (s === 'RESOLVED' || s === 'PAYOUT_FAILED' || s === 'EXPIRED_REFUNDED') return 'done';
+  return 'create';
+}
+
+export function nextActionHint({ status, isBuyer, isSeller, seller = '', buyer = '' } = {}) {
+  const s = String(status || '');
+  if (s === 'AWAITING_SHIPMENT') {
+    if (isSeller) {
+      return {
+        title: 'Your turn — confirm shipment',
+        body: 'Paste at least 1 origin-condition URL (click Example), then Confirm shipment. The buyer wallet cannot do this step.',
+      };
+    }
+    return {
+      title: 'Next: seller confirms shipment',
+      body: `This wallet is the buyer. In MetaMask switch to the seller ${seller || 'wallet'}, then click Refresh. Origin URL fields and Confirm shipment appear only for the seller.`,
+    };
+  }
+  if (s === 'SHIPPED' || s === 'DISPUTED') {
+    if (isBuyer) {
+      return {
+        title: s === 'DISPUTED' ? 'Your turn — report stronger evidence' : 'Your turn — report delivery',
+        body: 'Paste 1 delivery URL and 2 reference URLs (click Example on each), then Report delivery.',
+      };
+    }
+    return {
+      title: 'Next: buyer reports delivery',
+      body: `Switch MetaMask to the buyer ${buyer || 'wallet'}, then click Refresh. Report delivery is buyer-only.`,
+    };
+  }
+  if (s === 'DELIVERY_REPORTED') {
+    return {
+      title: 'Next: request AI adjudication',
+      body: 'Keep this tab open for 2–5 minutes. Either party can start it. If it stays on DELIVERY_REPORTED, replace URLs with the Example chips and report again.',
+    };
+  }
+  if (s === 'PAYOUT_FAILED') {
+    return {
+      title: 'Payout incomplete',
+      body: 'Buyer or seller can retry the unpaid side. AI will not run again.',
+    };
+  }
+  if (s === 'RESOLVED' || s === 'EXPIRED_REFUNDED') {
+    return {
+      title: 'Order finished',
+      body: s === 'EXPIRED_REFUNDED' ? 'Seller never shipped. Full escrow returned to the buyer.' : 'Escrow followed the AI verdict.',
+    };
+  }
+  return {
+    title: 'Create an order',
+    body: 'Buyer locks GEN, then the seller confirms shipment.',
+  };
+}
