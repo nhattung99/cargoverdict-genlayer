@@ -9,6 +9,7 @@ UserError = gl.vm.UserError
 
 VALID_VERDICTS = ("DELIVERED_INTACT", "DAMAGED", "NOT_DELIVERED")
 MIN_CONFIDENCE = 60
+RENDER_CHAR_CAP = 2000
 ZERO_ADDR = Address("0x0000000000000000000000000000000000000000")
 
 
@@ -175,13 +176,26 @@ def _parse_verdict(raw) -> dict:
     }
 
 
+def _bound_page_text(text) -> str:
+    s = str(text or "")
+    s = s.replace("<<<", "[").replace(">>>", "]").replace("```", "'''")
+    if len(s) > RENDER_CHAR_CAP:
+        s = s[:RENDER_CHAR_CAP]
+    return s
+
+
 def _fetch_url(url: str, kind: str) -> str:
+    """Fetch is non-fatal: a missing page must not roll back the whole resolve tx."""
+    body = ""
     try:
         res = gl.nondet.web.render(url, mode="text")
-        body = res.body if hasattr(res, "body") else res
-        return "[" + url + "]: " + str(body)
+        raw = res.body if hasattr(res, "body") else res
+        body = _bound_page_text(raw)
     except Exception as e:
-        raise UserError("Failed to fetch " + kind + " URL: " + url + " (" + str(e) + ")")
+        body = "FETCH_FAILED: " + str(e)
+    if len(body.strip()) == 0:
+        body = "FETCH_FAILED: empty page"
+    return "[" + kind + " " + url + "]: " + body
 
 
 def _pay(recipient, amount) -> None:
@@ -307,7 +321,7 @@ class Contract(gl.Contract):
         o = self.orders[order_id]
         if not _same_addr(gl.message.sender_address, o.buyer):
             raise UserError("Only buyer can report delivery")
-        if o.status not in ["SHIPPED", "DISPUTED"]:
+        if o.status not in ["SHIPPED", "DISPUTED", "DELIVERY_REPORTED"]:
             raise UserError("Cannot report delivery in status: " + o.status)
 
         o.delivery_evidence_urls = _clean_http_urls(delivery_evidence_urls, "delivery evidence", 1)
@@ -350,6 +364,9 @@ class Contract(gl.Contract):
             prompt += "- \"DELIVERED_INTACT\": goods arrived matching the described condition, no significant damage.\n"
             prompt += "- \"DAMAGED\": goods arrived but with significant damage/discrepancy versus origin condition.\n"
             prompt += "- \"NOT_DELIVERED\": independent sources do not confirm delivery occurred, or evidence is insufficient.\n\n"
+            prompt += "If any source is FETCH_FAILED, empty, a generic parking page (for example Example Domain), "
+            prompt += "or does not describe these specific goods, you MUST return NOT_DELIVERED with confidence 80.\n"
+            prompt += "Only return DELIVERED_INTACT or DAMAGED when origin and delivery pages clearly describe the listed goods.\n\n"
             prompt += "Return ONLY raw JSON, no markdown:\n"
             prompt += "{\"verdict\": \"DELIVERED_INTACT\" | \"DAMAGED\" | \"NOT_DELIVERED\", \"confidence\": <0-100>, \"reason\": \"<short justification>\"}"
 

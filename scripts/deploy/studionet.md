@@ -10,6 +10,8 @@ Do **not** switch the app or wallet to Asimov/Bradbury testnet. This project sta
 6. Set it in `frontend/.env` as `VITE_CONTRACT_ADDRESS=0x...` and restart `npm run dev`.
 7. After handshake, the same address goes into Vercel production env, then rebuild.
 
+If `resolve_order` stays on `DELIVERY_REPORTED`, the **on-chain** bytecode is still the previous deploy (fetch failures used to raise `UserError` and roll back). Redeploy this file, update `VITE_CONTRACT_ADDRESS`, and create a **new** order. Use tiny public pages (`example.com`, `example.org`, `example.net`, `rfc-editor.org`) — Wikipedia and fake `*.example` hosts are too heavy or unfetchable for GenVM.
+
 Fund the buyer/seller wallets from the Studio **Accounts** panel. Do not use `testnet-faucet.genlayer.foundation` — that faucet credits a different chain.
 
 `create_order` is `@gl.public.write.payable`. An older note that `.payable` does not exist is wrong for the current Studio runner — sending GEN with a non-payable method raises `called non-payable method`.

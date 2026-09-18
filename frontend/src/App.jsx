@@ -78,6 +78,11 @@ const verdictClass = (verdict) => {
 
 const statusClass = (status) => `badge badge-${String(status || '').toLowerCase()}`;
 
+const formatUrlList = (arr) => {
+  if (!Array.isArray(arr) || arr.length === 0) return '';
+  return arr.map((u) => String(u)).filter(Boolean).join(' · ');
+};
+
 const UrlEditor = ({ label, values, setValues, min, placeholder, example }) => (
   <div className="field">
     <label className="label">{label} (min {min})</label>
@@ -126,9 +131,12 @@ const UrlEditor = ({ label, values, setValues, min, placeholder, example }) => (
           type="button"
           className="chip"
           onClick={() => {
+            if (Array.isArray(example)) {
+              setValues(example.map((u) => String(u)));
+              return;
+            }
             const next = [...values];
-            next[0] = Array.isArray(example) ? example[0] : example;
-            if (Array.isArray(example) && example[1] && next.length > 1) next[1] = example[1];
+            next[0] = example;
             setValues(next);
           }}
         >
@@ -287,18 +295,21 @@ export default function App() {
           },
         });
         const status = String(settled?.status || '');
-        if (!status || status === fromStatus) {
-          const explorer = txExplorerUrl(hash);
+        if (status && status !== fromStatus) {
+          return hash;
+        }
+        const explorer = txExplorerUrl(hash);
+        const stuck =
+          `No verdict yet (order still ${fromStatus || 'DELIVERY_REPORTED'}). ` +
+          `Click Refresh in a few minutes. Do not use Wikipedia or fake *.example hosts — GenVM has to fetch every URL. ` +
+          `Create a new order and click Example on each URL field (example.com, example.org, example.net, rfc-editor). ` +
+          `Explorer: ${explorer}`;
+        if (receiptLooksFailed(receipt)) {
           throw new Error(
-            `AI consensus did not write a verdict yet. Keep this tab open and click Refresh in 1–2 minutes. ` +
-            `If it stays on DELIVERY_REPORTED, GenVM likely rolled back — usually because a URL could not be fetched ` +
-            `(fake *.example hosts fail). Create a new order using public pages such as example.com and Wikipedia. ` +
-            `Explorer: ${explorer}`
+            `GenVM rolled this adjudication back. ${stuck}`
           );
         }
-        if (receiptLooksFailed(receipt) && status === fromStatus) {
-          throw new Error(`AI transaction failed in GenVM. Explorer: ${txExplorerUrl(hash)}`);
-        }
+        setErrorMessage(stuck);
         return hash;
       }
 
@@ -484,12 +495,15 @@ export default function App() {
                 setEscrowStr(SAMPLE_ORDER.escrow);
                 setDamagedStr(SAMPLE_ORDER.damaged);
                 setDeadlineDays(SAMPLE_ORDER.deadlineDays);
+                setOriginUrls([EXAMPLE_ORIGIN_URL]);
+                setDeliveryUrls([EXAMPLE_DELIVERY_URL]);
+                setRefUrls([...EXAMPLE_REFERENCE_URLS]);
               }}
             >
               Fill sewing-machine sample
             </button>
           </div>
-          <p className="hint">Sample fills description, 1 GEN escrow, 0.7 GEN damaged payout, and a 14-day deadline. Paste the seller&apos;s wallet yourself — do not send GEN to a random address.</p>
+          <p className="hint">Sample fills description, 1 GEN escrow, 0.7 GEN damaged payout, a 14-day deadline, and tiny public evidence URLs (example.com / example.org / example.net / rfc-editor). Paste the seller&apos;s wallet yourself — do not send GEN to a random address. Wikipedia and fake *.example hosts make AI roll back with no verdict.</p>
 
           <div className="field">
             <label className="label">Goods description</label>
@@ -634,6 +648,15 @@ export default function App() {
                     <div><span>Seller</span><b className="mono">{shortAddr(o.seller)}</b></div>
                   </div>
                   <p className="hint"><Clock size={12} /> Ship by {formatDeadline(o.shipment_deadline)}</p>
+                  {formatUrlList(o.origin_condition_urls) && (
+                    <p className="hint mono">Origin: {formatUrlList(o.origin_condition_urls)}</p>
+                  )}
+                  {formatUrlList(o.delivery_evidence_urls) && (
+                    <p className="hint mono">Delivery: {formatUrlList(o.delivery_evidence_urls)}</p>
+                  )}
+                  {formatUrlList(o.reference_urls) && (
+                    <p className="hint mono">References: {formatUrlList(o.reference_urls)}</p>
+                  )}
 
                   <div className="chips" style={{ marginTop: '0.6rem' }}>
                     <button type="button" className="chip" onClick={() => copyText(id, id)}>
@@ -695,9 +718,14 @@ export default function App() {
                       </button>
                     )}
 
-                    {(o.status === 'SHIPPED' || o.status === 'DISPUTED') && isBuyer && (
+                    {(o.status === 'SHIPPED' || o.status === 'DISPUTED' || o.status === 'DELIVERY_REPORTED') && isBuyer && (
                       <>
                         {o.status === 'DISPUTED' && <p className="hint">AI was not confident. Submit stronger evidence and references, then resolve again.</p>}
+                        {o.status === 'DELIVERY_REPORTED' && (
+                          <p className="hint">
+                            If adjudication rolled back, click Example on the URL fields (example.com / example.org / example.net / rfc-editor) and report again, then request AI. If Report delivery is rejected, this on-chain contract is still the previous deploy — create a new order, or redeploy cargo_verdict.py first.
+                          </p>
+                        )}
                         <UrlEditor
                           label="Delivery evidence URLs"
                           values={deliveryUrls}
@@ -723,7 +751,7 @@ export default function App() {
                     {o.status === 'DELIVERY_REPORTED' && (
                       <>
                         <p className="hint">
-                          AI consensus on studionet often takes 2–5 minutes. Keep this tab open. Use public http(s) pages the contract can fetch — fake hosts like tracking.carrier.example will roll the transaction back with no verdict.
+                          AI consensus on studionet often takes 2–5 minutes. Keep this tab open. Use tiny public pages (click Example). Wikipedia and fake *.example hosts make GenVM roll back with no verdict.
                         </p>
                         <button
                           className="btn-ai"

@@ -59,9 +59,9 @@ No treasury hop. No value-forward bug.
 
 1. **Create order** — buyer sets goods description, seller, `damaged_payout_to_seller`, shipment deadline, and locks `escrow_amount` GEN.
 2. **Submit shipment** — seller attaches ≥1 origin-condition URL. Status → `SHIPPED`.
-3. **Report delivery** — buyer attaches ≥1 delivery evidence URL and ≥2 independent reference URLs (carrier tracking, customs, …). Status → `DELIVERY_REPORTED`. Also allowed from `DISPUTED`.
+3. **Report delivery** — buyer attaches ≥1 delivery evidence URL and ≥2 independent reference URLs (carrier tracking, customs, …). Status → `DELIVERY_REPORTED`. Also allowed from `DISPUTED` and from `DELIVERY_REPORTED` (replace URLs after a rolled-back resolve).
 4. **Resolve** — `resolve_order` runs `gl.vm.run_nondet`:
-   - Leader fetches every URL with `gl.nondet.web.render`, prompts the model, parses `{verdict, confidence, reason}`.
+   - Leader fetches every URL with `gl.nondet.web.render` (fetch failures become `FETCH_FAILED` text — they do **not** roll the tx back), prompts the model, parses `{verdict, confidence, reason}`.
    - Validator: absolute `verdict ==` and the same `confidence >= 60` branch.
 5. `confidence < 60` (or unparseable JSON) → `DISPUTED`. Buyer may `report_delivery` again.
 6. Valid verdict → `_execute_settlement`:
@@ -97,7 +97,7 @@ An older note that `.payable` “does not exist” is **wrong for the current St
 - `create_order(seller, goods_description, damaged_payout_to_seller, shipment_deadline) -> order_id` — attach GEN > 0; `0 < damaged_payout_to_seller < escrow`; buyer ≠ seller
 - `submit_shipment(order_id, origin_condition_urls)` — seller only, `AWAITING_SHIPMENT`, ≥1 http(s) URL
 - `claim_no_shipment_refund(order_id)` — buyer only, after deadline, if never shipped
-- `report_delivery(order_id, delivery_evidence_urls, reference_urls)` — buyer only, `SHIPPED` or `DISPUTED`, ≥1 evidence + ≥2 references
+- `report_delivery(order_id, delivery_evidence_urls, reference_urls)` — buyer only, `SHIPPED` / `DISPUTED` / `DELIVERY_REPORTED`, ≥1 evidence + ≥2 references
 - `resolve_order(order_id)` — AI classification + settle
 - `retry_resolution(order_id)` — buyer or seller, `PAYOUT_FAILED` only; does not re-run AI
 
@@ -163,7 +163,7 @@ cd frontend
 npm test
 ```
 
-Covered: happy path `DELIVERED_INTACT`, happy path `DAMAGED` (both flags true), happy path `NOT_DELIVERED`, seller misses deadline → buyer refund, report before ship blocked, low confidence → `DISPUTED` → report again → resolve, broken JSON, missing web mocks, missing evidence/refs, invalid `damaged_payout_to_seller`, buyer==seller, double-ship / double-resolve, **transfer fail on DELIVERED_INTACT / DAMAGED seller-only / DAMAGED buyer-only / DAMAGED both / NOT_DELIVERED / expiry refund → `PAYOUT_FAILED` → `retry_resolution` pays only the missing side**.
+Covered: happy path `DELIVERED_INTACT`, happy path `DAMAGED` (both flags true), happy path `NOT_DELIVERED`, seller misses deadline → buyer refund, report before ship blocked, low confidence → `DISPUTED` → report again → resolve, re-report from `DELIVERY_REPORTED`, broken JSON, fetch fail still settles (no rollback), missing evidence/refs, invalid `damaged_payout_to_seller`, buyer==seller, double-ship / double-resolve, **transfer fail on DELIVERED_INTACT / DAMAGED seller-only / DAMAGED buyer-only / DAMAGED both / NOT_DELIVERED / expiry refund → `PAYOUT_FAILED` → `retry_resolution` pays only the missing side**.
 
 ---
 

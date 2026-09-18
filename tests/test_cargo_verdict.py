@@ -363,6 +363,44 @@ def test_low_confidence_disputed_then_report_again(direct_vm, direct_deploy, dir
     assert row["buyer_refunded"] is True
 
 
+def test_rereport_from_delivery_reported_replaces_urls(direct_vm, direct_deploy, direct_accounts):
+    buyer = direct_accounts[1]
+    seller = direct_accounts[2]
+    contract = direct_deploy(CONTRACT_PATH)
+    vm = _active_vm(direct_vm)
+
+    order_id = _create_order(contract, vm, buyer, seller)
+    _ship(contract, vm, seller, order_id)
+    _report(contract, vm, buyer, order_id)
+    assert _order(contract, order_id)["status"] == "DELIVERY_REPORTED"
+
+    new_ev = "https://example.org/unbox.jpg"
+    new_r1 = "https://example.net/tracking"
+    new_r2 = "https://www.rfc-editor.org/rfc/rfc2606.txt"
+    vm.sender = buyer
+    contract.report_delivery(order_id, [new_ev], [new_r1, new_r2])
+    row = _order(contract, order_id)
+    assert row["status"] == "DELIVERY_REPORTED"
+    assert new_ev in row["delivery_evidence_urls"]
+    assert new_r1 in row["reference_urls"]
+    assert new_r2 in row["reference_urls"]
+
+    sim_installMocks(
+        vm,
+        web={
+            ORIGIN: "Packed intact: 4 new sewing machines, crates sealed, no dents",
+            new_ev: "Arrived intact: 4 new sewing machines, crates sealed, no dents",
+            new_r1: "Carrier tracking: delivered, POD signed, no exception codes",
+            new_r2: "Customs release: cleared, quantity 4, no damage remarks",
+        },
+        llm={"verdict": "DELIVERED_INTACT", "confidence": 90, "reason": "Replacement URLs confirm intact delivery"},
+    )
+    contract.resolve_order(order_id)
+    row = _order(contract, order_id)
+    assert row["status"] == "RESOLVED"
+    assert row["verdict"] == "DELIVERED_INTACT"
+
+
 def test_web_fail_and_invalid_json(direct_vm, direct_deploy, direct_accounts):
     buyer = direct_accounts[1]
     seller = direct_accounts[2]
@@ -388,11 +426,18 @@ def test_web_fail_and_invalid_json(direct_vm, direct_deploy, direct_accounts):
     order_id_2 = _create_order(contract, vm, buyer, seller)
     _ship(contract, vm, seller, order_id_2)
     _report(contract, vm, buyer, order_id_2)
-    sim_installMocks(vm, web={}, llm={"verdict": "DAMAGED", "confidence": 90, "reason": "unreachable"})
+    sim_installMocks(
+        vm,
+        web={},
+        llm={"verdict": "NOT_DELIVERED", "confidence": 80, "reason": "pages were FETCH_FAILED"},
+    )
     vm.sender = buyer
-    with pytest.raises(Exception):
-        contract.resolve_order(order_id_2)
-    assert _order(contract, order_id_2)["status"] == "DELIVERY_REPORTED"
+    contract.resolve_order(order_id_2)
+    row2 = _order(contract, order_id_2)
+    assert row2["status"] == "RESOLVED"
+    assert row2["verdict"] == "NOT_DELIVERED"
+    assert row2["buyer_refunded"] is True
+    assert row2["seller_paid"] is False
 
 
 def test_missing_evidence_and_reference_urls(direct_vm, direct_deploy, direct_accounts):

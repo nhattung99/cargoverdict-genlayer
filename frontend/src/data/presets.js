@@ -9,8 +9,8 @@ export const DEADLINE_PRESETS = [
 export const EXAMPLE_ORIGIN_URL = 'https://example.com';
 export const EXAMPLE_DELIVERY_URL = 'https://example.org';
 export const EXAMPLE_REFERENCE_URLS = [
-  'https://en.wikipedia.org/wiki/Cargo',
-  'https://en.wikipedia.org/wiki/Freight_transport',
+  'https://example.net',
+  'https://www.rfc-editor.org/rfc/rfc2606.txt',
 ];
 
 export const GOODS_HINT = 'Factory-new industrial sewing machines, 4 units, packed in sealed wooden crates.';

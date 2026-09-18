@@ -14,6 +14,11 @@ import {
   deadlineUnixFromDays,
   pollUntilOrderLeavesStatus,
 } from '../orderPoll.js';
+import {
+  EXAMPLE_ORIGIN_URL,
+  EXAMPLE_DELIVERY_URL,
+  EXAMPLE_REFERENCE_URLS,
+} from '../data/presets.js';
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
@@ -87,6 +92,12 @@ async function runOrderPollTests() {
   const d7 = deadlineUnixFromDays(7);
   const d14 = deadlineUnixFromDays(14);
   assert(d14 - d7 === 7n * 86400n, 'deadline presets differ by exact whole days');
+
+  const sampleUrls = [EXAMPLE_ORIGIN_URL, EXAMPLE_DELIVERY_URL, ...EXAMPLE_REFERENCE_URLS].join(' ').toLowerCase();
+  assert(!sampleUrls.includes('wikipedia'), 'sample URLs must be tiny public pages, not Wikipedia');
+  assert(EXAMPLE_REFERENCE_URLS.length >= 2, 'need two independent reference examples');
+  assert(EXAMPLE_ORIGIN_URL.startsWith('https://'), 'origin example is https');
+  assert(EXAMPLE_DELIVERY_URL.startsWith('https://'), 'delivery example is https');
 
   console.log('All order poll / list tests passed.');
 }
