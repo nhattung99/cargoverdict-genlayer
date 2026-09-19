@@ -22,10 +22,8 @@ https://cargoverdict-genlayer.vercel.app
 ## Deployed Contract
 
 - **Network:** studionet (GenLayer Studio hosted)
-- **Address:** _redeploy required_ — paste the new Studio address after deploying the neutral-evidence + seller-timeout bytecode
-- **Explorer:** https://explorer-studio.genlayer.com/
-
-Previous address `0xDf29CAA5e86918E31f05E20d4A26785c806Ef27f` is the pre-rejection bytecode (buyer-controlled references). Do not resubmit against it.
+- **Address:** `0x6Cea9A3DD89B2F518DbC07DC8Fa47479b78E6Bb1`
+- **Explorer:** https://explorer-studio.genlayer.com/address/0x6Cea9A3DD89B2F518DbC07DC8Fa47479b78E6Bb1
 
 If `VITE_CONTRACT_ADDRESS` is unset locally, the frontend still boots in preview mode (banner, no white crash) and writes stay disabled.
 
