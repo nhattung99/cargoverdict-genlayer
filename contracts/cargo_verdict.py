@@ -213,6 +213,7 @@ class Order:
     escrow_amount: bigint
     damaged_payout_to_seller: bigint
     shipment_deadline: u256
+    delivery_report_deadline: u256
     origin_condition_urls: DynArray[str]
     delivery_evidence_urls: DynArray[str]
     reference_urls: DynArray[str]
@@ -240,6 +241,7 @@ class Contract(gl.Contract):
         goods_description: str,
         damaged_payout_to_seller: bigint,
         shipment_deadline: u256,
+        delivery_report_deadline: u256,
     ) -> str:
         escrow = bigint(gl.message.value)
         if escrow <= bigint(0):
@@ -255,6 +257,8 @@ class Contract(gl.Contract):
             raise UserError("Buyer and seller cannot be the same address")
         if damaged_payout_to_seller <= bigint(0) or damaged_payout_to_seller >= escrow:
             raise UserError("damaged_payout_to_seller must be > 0 and strictly less than escrow_amount")
+        if u256(delivery_report_deadline) <= u256(shipment_deadline):
+            raise UserError("delivery_report_deadline must be strictly after shipment_deadline")
 
         order_id = str(self.order_counter)
         self.order_counter = self.order_counter + bigint(1)
@@ -266,6 +270,7 @@ class Contract(gl.Contract):
             escrow_amount=escrow,
             damaged_payout_to_seller=bigint(damaged_payout_to_seller),
             shipment_deadline=u256(shipment_deadline),
+            delivery_report_deadline=u256(delivery_report_deadline),
             origin_condition_urls=_empty_urls(),
             delivery_evidence_urls=_empty_urls(),
             reference_urls=_empty_urls(),
@@ -279,7 +284,13 @@ class Contract(gl.Contract):
         return order_id
 
     @gl.public.write
-    def submit_shipment(self, order_id: str, origin_condition_urls: DynArray[str]) -> None:
+    def submit_shipment(
+        self,
+        order_id: str,
+        origin_condition_urls: DynArray[str],
+        reference_urls: DynArray[str],
+    ) -> None:
+        """Seller pins origin photos AND neutral references. Buyer cannot change references later."""
         if order_id not in self.orders:
             raise UserError("Order does not exist")
         o = self.orders[order_id]
@@ -289,6 +300,7 @@ class Contract(gl.Contract):
             raise UserError("Cannot submit shipment in status: " + o.status)
 
         o.origin_condition_urls = _clean_http_urls(origin_condition_urls, "origin condition", 1)
+        o.reference_urls = _clean_http_urls(reference_urls, "independent reference", 2)
         o.status = "SHIPPED"
         self.orders[order_id] = o
 
@@ -310,12 +322,32 @@ class Contract(gl.Contract):
         self._refund_buyer_full(order_id)
 
     @gl.public.write
+    def claim_unreported_delivery(self, order_id: str) -> None:
+        """Seller claims full escrow if buyer never reports delivery before the report deadline."""
+        if order_id not in self.orders:
+            raise UserError("Order does not exist")
+        o = self.orders[order_id]
+        if not _same_addr(gl.message.sender_address, o.seller):
+            raise UserError("Only seller can claim unreported delivery")
+        if o.status != "SHIPPED":
+            raise UserError("Can only claim if buyer never reported delivery (status: " + o.status + ")")
+        if _current_unix_timestamp() <= o.delivery_report_deadline:
+            raise UserError("Delivery report deadline has not passed yet")
+
+        o.verdict = ""
+        o.confidence = u256(0)
+        o.verdict_reason = "Buyer did not report delivery before delivery_report_deadline"
+        o.status = "SELLER_TIMEOUT_PAID"
+        self.orders[order_id] = o
+        self._pay_seller_full(order_id)
+
+    @gl.public.write
     def report_delivery(
         self,
         order_id: str,
         delivery_evidence_urls: DynArray[str],
-        reference_urls: DynArray[str],
     ) -> None:
+        """Buyer may only attach delivery evidence. Seller-pinned references stay locked."""
         if order_id not in self.orders:
             raise UserError("Order does not exist")
         o = self.orders[order_id]
@@ -325,7 +357,6 @@ class Contract(gl.Contract):
             raise UserError("Cannot report delivery in status: " + o.status)
 
         o.delivery_evidence_urls = _clean_http_urls(delivery_evidence_urls, "delivery evidence", 1)
-        o.reference_urls = _clean_http_urls(reference_urls, "independent reference", 2)
         o.status = "DELIVERY_REPORTED"
         self.orders[order_id] = o
 
@@ -353,20 +384,26 @@ class Contract(gl.Contract):
 
             reference_contents = []
             for url in reference_urls_list:
-                reference_contents.append(_fetch_url(url, "reference"))
+                reference_contents.append(_fetch_url(url, "seller-pinned reference"))
 
             prompt = "You are a neutral B2B shipment dispute adjudicator.\n"
             prompt += "Goods description: \"" + goods_desc + "\"\n"
-            prompt += "Condition at origin (seller-submitted, before shipping): " + str(origin_contents) + "\n"
-            prompt += "Condition at delivery (buyer-submitted): " + str(delivery_contents) + "\n"
-            prompt += "Independent verification sources (carrier tracking, customs pages — prioritize if they contradict either party): " + str(reference_contents) + "\n\n"
+            prompt += "Condition at origin (seller-submitted): " + str(origin_contents) + "\n"
+            prompt += "Independent references (SELLER-PINNED at shipment — primary source of truth; "
+            prompt += "buyer cannot choose or replace these): " + str(reference_contents) + "\n"
+            prompt += "Condition at delivery (buyer-submitted photos/notes — secondary only): " + str(delivery_contents) + "\n\n"
             prompt += "Decide strictly one of three outcomes:\n"
-            prompt += "- \"DELIVERED_INTACT\": goods arrived matching the described condition, no significant damage.\n"
-            prompt += "- \"DAMAGED\": goods arrived but with significant damage/discrepancy versus origin condition.\n"
-            prompt += "- \"NOT_DELIVERED\": independent sources do not confirm delivery occurred, or evidence is insufficient.\n\n"
-            prompt += "If any source is FETCH_FAILED, empty, a generic parking page (for example Example Domain), "
-            prompt += "or does not describe these specific goods, you MUST return NOT_DELIVERED with confidence 80.\n"
-            prompt += "Only return DELIVERED_INTACT or DAMAGED when origin and delivery pages clearly describe the listed goods.\n\n"
+            prompt += "- \"DELIVERED_INTACT\": seller-pinned references confirm delivery and goods match origin condition.\n"
+            prompt += "- \"DAMAGED\": seller-pinned references and/or delivery evidence show significant damage versus origin.\n"
+            prompt += "- \"NOT_DELIVERED\": seller-pinned references clearly show the shipment was never delivered.\n\n"
+            prompt += "CRITICAL neutral-evidence rules:\n"
+            prompt += "1. Prioritize seller-pinned independent references over buyer delivery URLs.\n"
+            prompt += "2. Buyer delivery URLs alone must NEVER decide NOT_DELIVERED or force a refund.\n"
+            prompt += "3. If any seller-pinned reference is FETCH_FAILED, empty, a generic parking page "
+            prompt += "(Example Domain), or does not describe this shipment, you MUST return "
+            prompt += "confidence 0 with an empty verdict so the order stays disputed — do NOT invent "
+            prompt += "NOT_DELIVERED from missing/irrelevant pages.\n"
+            prompt += "4. NOT_DELIVERED requires affirmative non-delivery evidence in the seller-pinned references.\n\n"
             prompt += "Return ONLY raw JSON, no markdown:\n"
             prompt += "{\"verdict\": \"DELIVERED_INTACT\" | \"DAMAGED\" | \"NOT_DELIVERED\", \"confidence\": <0-100>, \"reason\": \"<short justification>\"}"
 
@@ -447,6 +484,25 @@ class Contract(gl.Contract):
                 o.verdict_reason = extra
         self.orders[order_id] = o
 
+    def _pay_seller_full(self, order_id: str) -> None:
+        o = self.orders[order_id]
+        if o.seller_paid:
+            o.status = "SELLER_TIMEOUT_PAID"
+            self.orders[order_id] = o
+            return
+        try:
+            _pay(o.seller, o.escrow_amount)
+            o.seller_paid = True
+            o.status = "SELLER_TIMEOUT_PAID"
+        except Exception as e:
+            o.status = "PAYOUT_FAILED"
+            extra = "Seller timeout payout failed: " + str(e)
+            if o.verdict_reason:
+                o.verdict_reason = o.verdict_reason + " (" + extra + ")"
+            else:
+                o.verdict_reason = extra
+        self.orders[order_id] = o
+
     def _execute_settlement(self, order_id: str) -> None:
         """Pay the stored discrete verdict. Retry only the unpaid side — never double-pay."""
         o = self.orders[order_id]
@@ -515,6 +571,9 @@ class Contract(gl.Contract):
         if o.verdict in VALID_VERDICTS:
             self._execute_settlement(order_id)
             return
+        if "Buyer did not report delivery" in str(o.verdict_reason):
+            self._pay_seller_full(order_id)
+            return
         self._refund_buyer_full(order_id)
 
     def _order_dict(self, order_id: str, o, full: bool) -> dict:
@@ -526,6 +585,7 @@ class Contract(gl.Contract):
             "escrow_amount": str(int(o.escrow_amount)),
             "damaged_payout_to_seller": str(int(o.damaged_payout_to_seller)),
             "shipment_deadline": str(int(o.shipment_deadline)),
+            "delivery_report_deadline": str(int(o.delivery_report_deadline)),
             "status": o.status,
             "verdict": o.verdict,
             "verdict_reason": o.verdict_reason,

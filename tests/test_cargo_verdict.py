@@ -12,6 +12,7 @@ ESCROW = 1000
 DAMAGED_PAYOUT = 700
 BUYER_REFUND_ON_DAMAGE = ESCROW - DAMAGED_PAYOUT  # 300 — integer only
 FUTURE_DEADLINE = 2_000_000_000
+REPORT_DEADLINE = FUTURE_DEADLINE + 86400
 PAST_DEADLINE = 1
 
 
@@ -95,27 +96,24 @@ def _create_order(
     desc="Industrial sewing machines, 4 units, factory-new in crates",
     damaged=DAMAGED_PAYOUT,
     deadline=FUTURE_DEADLINE,
+    report_deadline=REPORT_DEADLINE,
     escrow=ESCROW,
 ):
     vm.sender = buyer
     _set_value(vm, escrow)
-    order_id = contract.create_order(_addr(seller), desc, damaged, deadline)
+    order_id = contract.create_order(_addr(seller), desc, damaged, deadline, report_deadline)
     _clear_value(vm)
     return order_id
 
 
-def _ship(contract, vm, seller, order_id, urls=None):
+def _ship(contract, vm, seller, order_id, urls=None, refs=None):
     vm.sender = seller
-    contract.submit_shipment(order_id, urls or [ORIGIN])
+    contract.submit_shipment(order_id, urls or [ORIGIN], refs or [REF1, REF2])
 
 
-def _report(contract, vm, buyer, order_id, evidence=None, refs=None):
+def _report(contract, vm, buyer, order_id, evidence=None):
     vm.sender = buyer
-    contract.report_delivery(
-        order_id,
-        evidence or [DELIVERY],
-        refs or [REF1, REF2],
-    )
+    contract.report_delivery(order_id, evidence or [DELIVERY])
 
 
 def _default_web():
@@ -314,7 +312,7 @@ def test_report_delivery_before_ship_blocked(direct_vm, direct_deploy, direct_ac
     order_id = _create_order(contract, vm, buyer, seller)
     vm.sender = buyer
     with pytest.raises(Exception):
-        contract.report_delivery(order_id, [DELIVERY], [REF1, REF2])
+        contract.report_delivery(order_id, [DELIVERY])
     assert _order(contract, order_id)["status"] == "AWAITING_SHIPMENT"
 
 
@@ -338,21 +336,22 @@ def test_low_confidence_disputed_then_report_again(direct_vm, direct_deploy, dir
     assert row["confidence"] == 41
 
     extra_ev = "https://example.com/clearer-unbox.jpg"
-    extra_r1 = "https://tracking.carrier.example/shipment/ABC123#exceptions"
-    extra_r2 = "https://surveyor.example.com/report"
     vm.sender = buyer
-    contract.report_delivery(order_id, [extra_ev], [extra_r1, extra_r2])
+    contract.report_delivery(order_id, [extra_ev])
     assert _order(contract, order_id)["status"] == "DELIVERY_REPORTED"
+    # Buyer cannot replace seller-pinned references.
+    assert REF1 in _order(contract, order_id)["reference_urls"]
+    assert REF2 in _order(contract, order_id)["reference_urls"]
 
     sim_installMocks(
         vm,
         web={
             ORIGIN: "Packed intact: 4 new sewing machines, crates sealed",
             extra_ev: "Clear damage to two machines versus intact origin photos",
-            extra_r1: "Carrier exception DAMAGE",
-            extra_r2: "Independent surveyor confirms impact damage",
+            REF1: "Carrier exception DAMAGE",
+            REF2: "Independent surveyor confirms impact damage",
         },
-        llm={"verdict": "DAMAGED", "confidence": 92, "reason": "Updated independent sources confirm damage"},
+        llm={"verdict": "DAMAGED", "confidence": 92, "reason": "Updated delivery evidence confirms damage"},
     )
     contract.resolve_order(order_id)
 
@@ -363,7 +362,7 @@ def test_low_confidence_disputed_then_report_again(direct_vm, direct_deploy, dir
     assert row["buyer_refunded"] is True
 
 
-def test_rereport_from_delivery_reported_replaces_urls(direct_vm, direct_deploy, direct_accounts):
+def test_rereport_replaces_delivery_only_keeps_seller_refs(direct_vm, direct_deploy, direct_accounts):
     buyer = direct_accounts[1]
     seller = direct_accounts[2]
     contract = direct_deploy(CONTRACT_PATH)
@@ -375,25 +374,23 @@ def test_rereport_from_delivery_reported_replaces_urls(direct_vm, direct_deploy,
     assert _order(contract, order_id)["status"] == "DELIVERY_REPORTED"
 
     new_ev = "https://example.org/unbox.jpg"
-    new_r1 = "https://example.net/tracking"
-    new_r2 = "https://www.rfc-editor.org/rfc/rfc2606.txt"
     vm.sender = buyer
-    contract.report_delivery(order_id, [new_ev], [new_r1, new_r2])
+    contract.report_delivery(order_id, [new_ev])
     row = _order(contract, order_id)
     assert row["status"] == "DELIVERY_REPORTED"
     assert new_ev in row["delivery_evidence_urls"]
-    assert new_r1 in row["reference_urls"]
-    assert new_r2 in row["reference_urls"]
+    assert REF1 in row["reference_urls"]
+    assert REF2 in row["reference_urls"]
 
     sim_installMocks(
         vm,
         web={
             ORIGIN: "Packed intact: 4 new sewing machines, crates sealed, no dents",
             new_ev: "Arrived intact: 4 new sewing machines, crates sealed, no dents",
-            new_r1: "Carrier tracking: delivered, POD signed, no exception codes",
-            new_r2: "Customs release: cleared, quantity 4, no damage remarks",
+            REF1: "Carrier tracking: delivered, POD signed, no exception codes",
+            REF2: "Customs release: cleared, quantity 4, no damage remarks",
         },
-        llm={"verdict": "DELIVERED_INTACT", "confidence": 90, "reason": "Replacement URLs confirm intact delivery"},
+        llm={"verdict": "DELIVERED_INTACT", "confidence": 90, "reason": "Seller refs confirm intact delivery"},
     )
     contract.resolve_order(order_id)
     row = _order(contract, order_id)
@@ -426,17 +423,17 @@ def test_web_fail_and_invalid_json(direct_vm, direct_deploy, direct_accounts):
     order_id_2 = _create_order(contract, vm, buyer, seller)
     _ship(contract, vm, seller, order_id_2)
     _report(contract, vm, buyer, order_id_2)
+    # Irrelevant / failed seller-pinned pages must become DISPUTED, not a buyer refund.
     sim_installMocks(
         vm,
         web={},
-        llm={"verdict": "NOT_DELIVERED", "confidence": 80, "reason": "pages were FETCH_FAILED"},
+        llm={"verdict": "", "confidence": 0, "reason": "seller-pinned references were FETCH_FAILED"},
     )
     vm.sender = buyer
     contract.resolve_order(order_id_2)
     row2 = _order(contract, order_id_2)
-    assert row2["status"] == "RESOLVED"
-    assert row2["verdict"] == "NOT_DELIVERED"
-    assert row2["buyer_refunded"] is True
+    assert row2["status"] == "DISPUTED"
+    assert row2["buyer_refunded"] is False
     assert row2["seller_paid"] is False
 
 
@@ -449,17 +446,18 @@ def test_missing_evidence_and_reference_urls(direct_vm, direct_deploy, direct_ac
     order_id = _create_order(contract, vm, buyer, seller)
     vm.sender = seller
     with pytest.raises(Exception):
-        contract.submit_shipment(order_id, [])
+        contract.submit_shipment(order_id, [], [REF1, REF2])
     with pytest.raises(Exception):
-        contract.submit_shipment(order_id, ["ftp://not-http"])
+        contract.submit_shipment(order_id, [ORIGIN], [REF1])
+    with pytest.raises(Exception):
+        contract.submit_shipment(order_id, ["ftp://not-http"], [REF1, REF2])
     _ship(contract, vm, seller, order_id)
 
     vm.sender = buyer
     with pytest.raises(Exception):
-        contract.report_delivery(order_id, [], [REF1, REF2])
-    with pytest.raises(Exception):
-        contract.report_delivery(order_id, [DELIVERY], [REF1])
+        contract.report_delivery(order_id, [])
     assert _order(contract, order_id)["status"] == "SHIPPED"
+    assert REF1 in _order(contract, order_id)["reference_urls"]
 
 
 def test_bad_damaged_payout_and_same_party_blocked(direct_vm, direct_deploy, direct_accounts):
@@ -471,37 +469,43 @@ def test_bad_damaged_payout_and_same_party_blocked(direct_vm, direct_deploy, dir
     vm.sender = buyer
     _set_value(vm, ESCROW)
     with pytest.raises(Exception):
-        contract.create_order(_addr(buyer), "same party", DAMAGED_PAYOUT, FUTURE_DEADLINE)
+        contract.create_order(_addr(buyer), "same party", DAMAGED_PAYOUT, FUTURE_DEADLINE, REPORT_DEADLINE)
     _clear_value(vm)
 
     vm.sender = buyer
     _set_value(vm, ESCROW)
     with pytest.raises(Exception):
-        contract.create_order(_addr(seller), "zero damaged", 0, FUTURE_DEADLINE)
+        contract.create_order(_addr(seller), "zero damaged", 0, FUTURE_DEADLINE, REPORT_DEADLINE)
     _clear_value(vm)
 
     vm.sender = buyer
     _set_value(vm, ESCROW)
     with pytest.raises(Exception):
-        contract.create_order(_addr(seller), "equal to escrow", ESCROW, FUTURE_DEADLINE)
+        contract.create_order(_addr(seller), "equal to escrow", ESCROW, FUTURE_DEADLINE, REPORT_DEADLINE)
     _clear_value(vm)
 
     vm.sender = buyer
     _set_value(vm, ESCROW)
     with pytest.raises(Exception):
-        contract.create_order(_addr(seller), "greater than escrow", ESCROW + 1, FUTURE_DEADLINE)
+        contract.create_order(_addr(seller), "greater than escrow", ESCROW + 1, FUTURE_DEADLINE, REPORT_DEADLINE)
     _clear_value(vm)
 
     vm.sender = buyer
     _set_value(vm, 0)
     with pytest.raises(Exception):
-        contract.create_order(_addr(seller), "no escrow", DAMAGED_PAYOUT, FUTURE_DEADLINE)
+        contract.create_order(_addr(seller), "no escrow", DAMAGED_PAYOUT, FUTURE_DEADLINE, REPORT_DEADLINE)
     _clear_value(vm)
 
     vm.sender = buyer
     _set_value(vm, ESCROW)
     with pytest.raises(Exception):
-        contract.create_order(_addr(seller), "   ", DAMAGED_PAYOUT, FUTURE_DEADLINE)
+        contract.create_order(_addr(seller), "   ", DAMAGED_PAYOUT, FUTURE_DEADLINE, REPORT_DEADLINE)
+    _clear_value(vm)
+
+    vm.sender = buyer
+    _set_value(vm, ESCROW)
+    with pytest.raises(Exception):
+        contract.create_order(_addr(seller), "report deadline too early", DAMAGED_PAYOUT, FUTURE_DEADLINE, FUTURE_DEADLINE)
     _clear_value(vm)
 
     assert contract.get_order_count() == 0
@@ -517,7 +521,7 @@ def test_double_ship_double_resolve_blocked(direct_vm, direct_deploy, direct_acc
     _ship(contract, vm, seller, order_id)
     vm.sender = seller
     with pytest.raises(Exception):
-        contract.submit_shipment(order_id, [ORIGIN])
+        contract.submit_shipment(order_id, [ORIGIN], [REF1, REF2])
 
     _report(contract, vm, buyer, order_id)
     vm.sender = buyer
@@ -527,7 +531,70 @@ def test_double_ship_double_resolve_blocked(direct_vm, direct_deploy, direct_acc
     with pytest.raises(Exception):
         contract.resolve_order(order_id)
     with pytest.raises(Exception):
-        contract.report_delivery(order_id, [DELIVERY], [REF1, REF2])
+        contract.report_delivery(order_id, [DELIVERY])
+
+
+def test_seller_timeout_when_buyer_never_reports(direct_vm, direct_deploy, direct_accounts, monkeypatch):
+    buyer = direct_accounts[1]
+    seller = direct_accounts[2]
+    other = direct_accounts[3]
+    contract = direct_deploy(CONTRACT_PATH)
+    vm = _active_vm(direct_vm)
+
+    order_id = _create_order(contract, vm, buyer, seller)
+    _ship(contract, vm, seller, order_id)
+
+    vm.sender = seller
+    with pytest.raises(Exception):
+        contract.claim_unreported_delivery(order_id)
+
+    patched = _patch_clock(contract, monkeypatch, REPORT_DEADLINE + 10)
+    assert patched is True
+
+    vm.sender = buyer
+    with pytest.raises(Exception):
+        contract.claim_unreported_delivery(order_id)
+    vm.sender = other
+    with pytest.raises(Exception):
+        contract.claim_unreported_delivery(order_id)
+
+    vm.sender = seller
+    contract.claim_unreported_delivery(order_id)
+    row = _order(contract, order_id)
+    assert row["status"] == "SELLER_TIMEOUT_PAID"
+    assert row["seller_paid"] is True
+    assert row["buyer_refunded"] is False
+    assert "did not report delivery" in row["verdict_reason"].lower()
+
+
+def test_seller_timeout_fail_then_retry(direct_vm, direct_deploy, direct_accounts, monkeypatch):
+    buyer = direct_accounts[1]
+    seller = direct_accounts[2]
+    contract = direct_deploy(CONTRACT_PATH)
+    vm = _active_vm(direct_vm)
+
+    order_id = _create_order(contract, vm, buyer, seller)
+    _ship(contract, vm, seller, order_id)
+    assert _patch_clock(contract, monkeypatch, REPORT_DEADLINE + 5) is True
+
+    payments = []
+    _install_selective_fail(monkeypatch, lambda dest, amount, paid: True, payments)
+    vm.sender = seller
+    contract.claim_unreported_delivery(order_id)
+    row = _order(contract, order_id)
+    assert row["status"] == "PAYOUT_FAILED"
+    assert row["seller_paid"] is False
+
+    monkeypatch.undo()
+    assert _patch_clock(contract, monkeypatch, REPORT_DEADLINE + 5) is True
+    retry_payments = []
+    _install_selective_fail(monkeypatch, lambda dest, amount, paid: False, retry_payments)
+    vm.sender = seller
+    contract.retry_resolution(order_id)
+    row = _order(contract, order_id)
+    assert row["status"] == "SELLER_TIMEOUT_PAID"
+    assert row["seller_paid"] is True
+    assert [p["amount"] for p in retry_payments] == [ESCROW]
 
 
 def _install_selective_fail(monkeypatch, fail_when, payments):

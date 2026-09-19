@@ -46,6 +46,7 @@ import {
   percentOfWei,
   damagedPayoutValid,
   settlementPreview,
+  payoutSideLabel,
   weiFromOrderField,
 } from './money.js';
 import {
@@ -188,6 +189,7 @@ export default function App() {
   const [escrowStr, setEscrowStr] = useState('1');
   const [damagedStr, setDamagedStr] = useState('');
   const [deadlineDays, setDeadlineDays] = useState(14);
+  const [reportDays, setReportDays] = useState(21);
 
   const [originUrls, setOriginUrls] = useState(['']);
   const [deliveryUrls, setDeliveryUrls] = useState(['']);
@@ -389,10 +391,14 @@ export default function App() {
       }
       if (escrowWei <= 0n) throw new Error('Escrow must be greater than 0 GEN.');
       if (!damagedOk) throw new Error('Damaged payout must be greater than 0 and strictly less than escrow.');
+      if (reportDays <= deadlineDays) {
+        throw new Error('Buyer report deadline must be after the seller ship deadline.');
+      }
       const deadline = deadlineUnixFromDays(deadlineDays);
+      const reportDeadline = deadlineUnixFromDays(reportDays);
       await runWrite(
         'create_order',
-        [sellerAddr.trim(), goods.trim(), damagedWei, deadline],
+        [sellerAddr.trim(), goods.trim(), damagedWei, deadline, reportDeadline],
         escrowWei
       );
       setTab('orders');
@@ -407,8 +413,10 @@ export default function App() {
   const handleShip = async (orderId) => {
     try {
       const urls = cleanUrls(originUrls);
+      const refs = cleanUrls(refUrls);
       if (urls.length < 1) throw new Error('Paste at least 1 origin-condition URL.');
-      await runWrite('submit_shipment', [orderId, urls]);
+      if (refs.length < 2) throw new Error('Paste at least 2 independent reference URLs (locked after ship).');
+      await runWrite('submit_shipment', [orderId, urls, refs]);
     } catch (err) {
       setErrorMessage(formatWalletError(err, 'Submit shipment failed'));
     }
@@ -417,10 +425,8 @@ export default function App() {
   const handleReport = async (orderId) => {
     try {
       const evidence = cleanUrls(deliveryUrls);
-      const refs = cleanUrls(refUrls);
       if (evidence.length < 1) throw new Error('Paste at least 1 delivery evidence URL.');
-      if (refs.length < 2) throw new Error('Paste at least 2 independent reference URLs.');
-      await runWrite('report_delivery', [orderId, evidence, refs]);
+      await runWrite('report_delivery', [orderId, evidence]);
     } catch (err) {
       setErrorMessage(formatWalletError(err, 'Report delivery failed'));
     }
@@ -449,6 +455,14 @@ export default function App() {
       await runWrite('claim_no_shipment_refund', [orderId]);
     } catch (err) {
       setErrorMessage(formatWalletError(err, 'Expiry refund failed'));
+    }
+  };
+
+  const handleSellerTimeout = async (orderId) => {
+    try {
+      await runWrite('claim_unreported_delivery', [orderId]);
+    } catch (err) {
+      setErrorMessage(formatWalletError(err, 'Seller timeout claim failed'));
     }
   };
 
@@ -525,7 +539,7 @@ export default function App() {
       {tab === 'create' && (
         <form className="card" onSubmit={handleCreate}>
           <h2>Lock GEN against a shipment</h2>
-          <p className="hint">Buyer funds escrow now. Two fixed amounts are agreed up front — full payment if intact, a smaller fixed payout if damaged. The contract never computes a percentage.</p>
+          <p className="hint">Buyer funds escrow now. Two fixed amounts are agreed up front — full payment if intact, a smaller fixed payout if damaged. Independent references are pinned by the <strong>seller</strong> at shipment — the buyer cannot steer them.</p>
           <div className="chips" style={{ marginBottom: '1rem' }}>
             <button
               type="button"
@@ -535,6 +549,7 @@ export default function App() {
                 setEscrowStr(SAMPLE_ORDER.escrow);
                 setDamagedStr(SAMPLE_ORDER.damaged);
                 setDeadlineDays(SAMPLE_ORDER.deadlineDays);
+                setReportDays(SAMPLE_ORDER.reportDays);
                 setOriginUrls([EXAMPLE_ORIGIN_URL]);
                 setDeliveryUrls([EXAMPLE_DELIVERY_URL]);
                 setRefUrls([...EXAMPLE_REFERENCE_URLS]);
@@ -543,7 +558,7 @@ export default function App() {
               Fill sewing-machine sample
             </button>
           </div>
-          <p className="hint">Sample fills description, 1 GEN escrow, 0.7 GEN damaged payout, a 14-day deadline, and tiny public evidence URLs (example.com / example.org / example.net / rfc-editor). Paste the seller&apos;s wallet yourself — do not send GEN to a random address. Wikipedia and fake *.example hosts make AI roll back with no verdict.</p>
+          <p className="hint">Sample fills description, 1 GEN escrow, 0.7 GEN damaged payout, ship-by 14 days, and buyer-report-by 21 days. Paste the seller&apos;s wallet yourself. Seller later pins reference URLs; buyer only adds delivery evidence.</p>
 
           <div className="field">
             <label className="label">Goods description</label>
@@ -637,13 +652,24 @@ export default function App() {
                   type="button"
                   key={p.days}
                   className={`chip ${deadlineDays === p.days ? 'active' : ''}`}
-                  onClick={() => setDeadlineDays(p.days)}
+                  onClick={() => {
+                    setDeadlineDays(p.days);
+                    setReportDays(p.reportDays);
+                  }}
                 >
-                  <Clock size={14} /> {p.label}
+                  <Clock size={14} /> Ship by {p.label}
                 </button>
               ))}
             </div>
-            <p className="hint">Seller must confirm shipment before this window. After that, buyer can reclaim the full escrow without AI.</p>
+            <p className="hint">Seller must confirm shipment (and pin independent references) before this window. After that, buyer can reclaim the full escrow without AI.</p>
+          </div>
+
+          <div className="field">
+            <label className="label">Buyer report deadline</label>
+            <p className="hint">
+              Buyer must report delivery evidence by day {reportDays} (strictly after ship-by day {deadlineDays}).
+              If the buyer never reports, the seller can claim the full escrow after this deadline.
+            </p>
           </div>
 
           <button className="btn-primary full" type="submit" disabled={loading || !hasContractAddress || !account}>
@@ -702,14 +728,15 @@ export default function App() {
                     <div><span>Seller</span><b className="mono">{shortAddr(o.seller)}</b></div>
                   </div>
                   <p className="hint"><Clock size={12} /> Ship by {formatDeadline(o.shipment_deadline)}</p>
+                  <p className="hint"><Clock size={12} /> Buyer report by {formatDeadline(o.delivery_report_deadline)}</p>
                   {formatUrlList(o.origin_condition_urls) && (
                     <p className="hint mono">Origin: {formatUrlList(o.origin_condition_urls)}</p>
                   )}
+                  {formatUrlList(o.reference_urls) && (
+                    <p className="hint mono">Seller-pinned refs: {formatUrlList(o.reference_urls)}</p>
+                  )}
                   {formatUrlList(o.delivery_evidence_urls) && (
                     <p className="hint mono">Delivery: {formatUrlList(o.delivery_evidence_urls)}</p>
-                  )}
-                  {formatUrlList(o.reference_urls) && (
-                    <p className="hint mono">References: {formatUrlList(o.reference_urls)}</p>
                   )}
 
                   <div className="chips" style={{ marginTop: '0.6rem' }}>
@@ -731,10 +758,18 @@ export default function App() {
                       <strong>{o.verdict}</strong>
                       <p className="hint">Confidence {o.confidence}/100 — {o.verdict_reason || '—'}</p>
                       <p className="hint">
-                        Seller {formatWeiToGen(preview.seller)} GEN {o.seller_paid ? '(paid)' : '(pending)'}
+                        Seller {formatWeiToGen(preview.seller)} GEN {payoutSideLabel(preview.seller, o.seller_paid, 'paid')}
                         {' · '}
-                        Buyer {formatWeiToGen(preview.buyer)} GEN {o.buyer_refunded ? '(refunded)' : '(pending)'}
+                        Buyer {formatWeiToGen(preview.buyer)} GEN {payoutSideLabel(preview.buyer, o.buyer_refunded, 'refunded')}
                       </p>
+                    </div>
+                  )}
+
+                  {o.status === 'SELLER_TIMEOUT_PAID' && (
+                    <div className={`verdict-box ${verdictClass('DELIVERED_INTACT')}`}>
+                      <strong>Seller timeout paid</strong>
+                      <p className="hint">{o.verdict_reason || 'Buyer never reported delivery.'}</p>
+                      <p className="hint">Seller {formatWeiToGen(escrow)} GEN (paid)</p>
                     </div>
                   )}
 
@@ -763,6 +798,15 @@ export default function App() {
                           placeholder="https://photo of packed goods…"
                           example={EXAMPLE_ORIGIN_URL}
                         />
+                        <UrlEditor
+                          label="Independent reference URLs (locked after confirm)"
+                          values={refUrls}
+                          setValues={setRefUrls}
+                          min={2}
+                          placeholder="https://carrier tracking or customs page…"
+                          example={EXAMPLE_REFERENCE_URLS}
+                        />
+                        <p className="hint">These references become the primary AI source of truth. The buyer cannot replace them.</p>
                         <button className="btn-primary" type="button" onClick={() => handleShip(id)} disabled={loading}>
                           <Ship size={16} /> Confirm shipment
                         </button>
@@ -778,12 +822,23 @@ export default function App() {
                       </>
                     )}
 
+                    {o.status === 'SHIPPED' && isSeller && (
+                      <>
+                        <p className="hint">If the buyer never reports by the report deadline, claim the full escrow here.</p>
+                        <button className="btn-secondary" type="button" onClick={() => handleSellerTimeout(id)} disabled={loading}>
+                          Claim unreported-delivery payout
+                        </button>
+                      </>
+                    )}
+
                     {(o.status === 'SHIPPED' || o.status === 'DISPUTED' || o.status === 'DELIVERY_REPORTED') && isBuyer && (
                       <>
-                        {o.status === 'DISPUTED' && <p className="hint">AI was not confident. Submit stronger evidence and references, then resolve again.</p>}
+                        {o.status === 'DISPUTED' && (
+                          <p className="hint">AI was not confident (often weak seller-pinned refs). Submit clearer delivery evidence, then resolve again. References stay seller-pinned.</p>
+                        )}
                         {o.status === 'DELIVERY_REPORTED' && (
                           <p className="hint">
-                            If adjudication rolled back, click Example on the URL fields (example.com / example.org / example.net / rfc-editor) and report again, then request AI. If Report delivery is rejected, this on-chain contract is still the previous deploy — create a new order, or redeploy cargo_verdict.py first.
+                            You can replace delivery evidence only. Seller-pinned references stay locked. If Report delivery is rejected, redeploy the new contract and create a new order.
                           </p>
                         )}
                         <UrlEditor
@@ -794,14 +849,6 @@ export default function App() {
                           placeholder="https://unboxing / inspection photo…"
                           example={EXAMPLE_DELIVERY_URL}
                         />
-                        <UrlEditor
-                          label="Independent reference URLs"
-                          values={refUrls}
-                          setValues={setRefUrls}
-                          min={2}
-                          placeholder="https://carrier tracking or customs page…"
-                          example={EXAMPLE_REFERENCE_URLS}
-                        />
                         <button className="btn-secondary" type="button" onClick={() => handleReport(id)} disabled={loading}>
                           Report delivery
                         </button>
@@ -811,7 +858,7 @@ export default function App() {
                     {o.status === 'DELIVERY_REPORTED' && (
                       <>
                         <p className="hint">
-                          AI consensus on studionet often takes 2–5 minutes. Keep this tab open. Use tiny public pages (click Example). Wikipedia and fake *.example hosts make GenVM roll back with no verdict.
+                          AI prioritizes seller-pinned references. Failed or generic pages become DISPUTED — not an automatic buyer refund. Keep this tab open 2–5 minutes.
                         </p>
                         <button
                           className="btn-ai"

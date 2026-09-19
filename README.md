@@ -22,8 +22,10 @@ https://cargoverdict-genlayer.vercel.app
 ## Deployed Contract
 
 - **Network:** studionet (GenLayer Studio hosted)
-- **Address:** `0xDf29CAA5e86918E31f05E20d4A26785c806Ef27f`
-- **Explorer:** https://explorer-studio.genlayer.com/address/0xDf29CAA5e86918E31f05E20d4A26785c806Ef27f
+- **Address:** _redeploy required_ — paste the new Studio address after deploying the neutral-evidence + seller-timeout bytecode
+- **Explorer:** https://explorer-studio.genlayer.com/
+
+Previous address `0xDf29CAA5e86918E31f05E20d4A26785c806Ef27f` is the pre-rejection bytecode (buyer-controlled references). Do not resubmit against it.
 
 If `VITE_CONTRACT_ADDRESS` is unset locally, the frontend still boots in preview mode (banner, no white crash) and writes stay disabled.
 
@@ -57,19 +59,21 @@ No treasury hop. No value-forward bug.
 
 ## Resolution flow
 
-1. **Create order** — buyer sets goods description, seller, `damaged_payout_to_seller`, shipment deadline, and locks `escrow_amount` GEN.
-2. **Submit shipment** — seller attaches ≥1 origin-condition URL. Status → `SHIPPED`.
-3. **Report delivery** — buyer attaches ≥1 delivery evidence URL and ≥2 independent reference URLs (carrier tracking, customs, …). Status → `DELIVERY_REPORTED`. Also allowed from `DISPUTED` and from `DELIVERY_REPORTED` (replace URLs after a rolled-back resolve).
+1. **Create order** — buyer sets goods description, seller, `damaged_payout_to_seller`, `shipment_deadline`, `delivery_report_deadline` (must be after ship deadline), and locks `escrow_amount` GEN.
+2. **Submit shipment** — seller attaches ≥1 origin-condition URL **and ≥2 independent reference URLs** (carrier/customs). References are **locked** — the buyer cannot change them. Status → `SHIPPED`.
+3. **Report delivery** — buyer attaches ≥1 delivery evidence URL only. Status → `DELIVERY_REPORTED`. Also allowed from `DISPUTED` and `DELIVERY_REPORTED` (replace delivery evidence only).
 4. **Resolve** — `resolve_order` runs `gl.vm.run_nondet`:
-   - Leader fetches every URL with `gl.nondet.web.render` (fetch failures become `FETCH_FAILED` text — they do **not** roll the tx back), prompts the model, parses `{verdict, confidence, reason}`.
+   - Leader fetches seller-pinned references first, then origin and buyer delivery pages (`FETCH_FAILED` stays in the prompt — no rollback).
+   - AI must prioritize seller-pinned references. Irrelevant / failed pages → confidence 0 → `DISPUTED` (not an automatic buyer refund).
    - Validator: absolute `verdict ==` and the same `confidence >= 60` branch.
-5. `confidence < 60` (or unparseable JSON) → `DISPUTED`. Buyer may `report_delivery` again.
+5. `confidence < 60` (or unparseable JSON) → `DISPUTED`. Buyer may re-report delivery evidence only.
 6. Valid verdict → `_execute_settlement`:
    - `DELIVERED_INTACT` → seller gets `escrow_amount`
    - `DAMAGED` → seller gets `damaged_payout_to_seller`, buyer gets the remainder
-   - `NOT_DELIVERED` → buyer gets `escrow_amount`
-7. Each side has its own flag (`seller_paid` / `buyer_refunded`). A transfer fail sets `PAYOUT_FAILED`. `retry_resolution` **only retries the unpaid side** and never pays a side that already succeeded.
-8. If the seller never ships before `shipment_deadline`, buyer calls `claim_no_shipment_refund` (no AI). Failed expiry refunds also use `retry_resolution`.
+   - `NOT_DELIVERED` → buyer gets `escrow_amount` (only when seller-pinned refs affirmatively show non-delivery)
+7. Each side has its own flag (`seller_paid` / `buyer_refunded`). A transfer fail sets `PAYOUT_FAILED`. `retry_resolution` **only retries the unpaid side**.
+8. If the seller never ships before `shipment_deadline`, buyer calls `claim_no_shipment_refund` (no AI).
+9. If the buyer never reports before `delivery_report_deadline` while status is `SHIPPED`, seller calls `claim_unreported_delivery` → full escrow to seller (`SELLER_TIMEOUT_PAID`).
 
 ---
 
@@ -94,10 +98,11 @@ An older note that `.payable` “does not exist” is **wrong for the current St
 
 ### Write methods
 
-- `create_order(seller, goods_description, damaged_payout_to_seller, shipment_deadline) -> order_id` — attach GEN > 0; `0 < damaged_payout_to_seller < escrow`; buyer ≠ seller
-- `submit_shipment(order_id, origin_condition_urls)` — seller only, `AWAITING_SHIPMENT`, ≥1 http(s) URL
-- `claim_no_shipment_refund(order_id)` — buyer only, after deadline, if never shipped
-- `report_delivery(order_id, delivery_evidence_urls, reference_urls)` — buyer only, `SHIPPED` / `DISPUTED` / `DELIVERY_REPORTED`, ≥1 evidence + ≥2 references
+- `create_order(seller, goods_description, damaged_payout_to_seller, shipment_deadline, delivery_report_deadline) -> order_id` — attach GEN > 0; `0 < damaged_payout_to_seller < escrow`; buyer ≠ seller; report deadline > ship deadline
+- `submit_shipment(order_id, origin_condition_urls, reference_urls)` — seller only, `AWAITING_SHIPMENT`, ≥1 origin + ≥2 independent references (locked)
+- `claim_no_shipment_refund(order_id)` — buyer only, after ship deadline, if never shipped
+- `claim_unreported_delivery(order_id)` — seller only, after report deadline, if still `SHIPPED`
+- `report_delivery(order_id, delivery_evidence_urls)` — buyer only, `SHIPPED` / `DISPUTED` / `DELIVERY_REPORTED`, ≥1 delivery evidence (cannot change seller refs)
 - `resolve_order(order_id)` — AI classification + settle
 - `retry_resolution(order_id)` — buyer or seller, `PAYOUT_FAILED` only; does not re-run AI
 
@@ -163,7 +168,7 @@ cd frontend
 npm test
 ```
 
-Covered: happy path `DELIVERED_INTACT`, happy path `DAMAGED` (both flags true), happy path `NOT_DELIVERED`, seller misses deadline → buyer refund, report before ship blocked, low confidence → `DISPUTED` → report again → resolve, re-report from `DELIVERY_REPORTED`, broken JSON, fetch fail still settles (no rollback), missing evidence/refs, invalid `damaged_payout_to_seller`, buyer==seller, double-ship / double-resolve, **transfer fail on DELIVERED_INTACT / DAMAGED seller-only / DAMAGED buyer-only / DAMAGED both / NOT_DELIVERED / expiry refund → `PAYOUT_FAILED` → `retry_resolution` pays only the missing side**.
+Covered: happy path `DELIVERED_INTACT`, happy path `DAMAGED` (both flags true), happy path `NOT_DELIVERED`, seller misses deadline → buyer refund, buyer never reports → seller timeout payout, report before ship blocked, low confidence → `DISPUTED` → re-report delivery only (seller refs locked), broken JSON, fetch fail → `DISPUTED` (not buyer refund), missing evidence/refs, invalid `damaged_payout_to_seller` / report deadline, buyer==seller, double-ship / double-resolve, **transfer fail paths → `PAYOUT_FAILED` → `retry_resolution` pays only the missing side**.
 
 ---
 

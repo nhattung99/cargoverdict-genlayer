@@ -10,7 +10,7 @@ Do **not** switch the app or wallet to Asimov/Bradbury testnet. This project sta
 6. Set it in `frontend/.env` as `VITE_CONTRACT_ADDRESS=0x...` and restart `npm run dev`.
 7. After handshake, the same address goes into Vercel production env, then rebuild.
 
-Live studionet address: `0xDf29CAA5e86918E31f05E20d4A26785c806Ef27f`. Create a **new** order after each redeploy. Use tiny public pages (`example.com`, `example.org`, `example.net`, `rfc-editor.org`) — Wikipedia and fake `*.example` hosts are too heavy or unfetchable for GenVM.
+Live studionet address must be a **redeploy** of this file after the neutral-evidence + seller-timeout changes. Old bytecode still lets the buyer choose references. Create a **new** order after each redeploy. Seller pins independent references at Confirm shipment; buyer only adds delivery evidence.
 
 Fund the buyer/seller wallets from the Studio **Accounts** panel. Do not use `testnet-faucet.genlayer.foundation` — that faucet credits a different chain.
 

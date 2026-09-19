@@ -5,6 +5,7 @@ import {
   percentOfWei,
   damagedPayoutValid,
   settlementPreview,
+  payoutSideLabel,
 } from '../money.js';
 
 function assert(cond, msg) {
@@ -65,6 +66,9 @@ function runUnitConversionTests() {
 
   const missing = settlementPreview({ ...damagedOrder, verdict: 'NOT_DELIVERED' });
   assert(missing.seller === 0n && missing.buyer === 1000n, 'not delivered refunds buyer in full');
+  assert(payoutSideLabel(0n, false, 'paid') === '(none)', 'zero payout is not pending');
+  assert(payoutSideLabel(1000n, true, 'refunded') === '(refunded)', 'paid side uses the paid word');
+  assert(payoutSideLabel(1000n, false, 'paid') === '(pending)', 'unpaid positive amount stays pending');
 
   console.log('All precision unit conversion tests passed.');
 }

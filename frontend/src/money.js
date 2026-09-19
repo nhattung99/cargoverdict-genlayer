@@ -88,4 +88,9 @@ export const settlementPreview = (order) => {
   return { seller: 0n, buyer: 0n };
 };
 
+export const payoutSideLabel = (amountWei, alreadyPaid, paidWord) => {
+  if (amountWei <= 0n) return '(none)';
+  return alreadyPaid ? `(${paidWord})` : '(pending)';
+};
+
 export { WEI_PER_GEN };

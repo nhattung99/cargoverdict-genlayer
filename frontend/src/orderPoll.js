@@ -207,7 +207,14 @@ export function flowCurrentStep(status) {
   if (s === 'AWAITING_SHIPMENT') return 'ship';
   if (s === 'SHIPPED' || s === 'DISPUTED') return 'report';
   if (s === 'DELIVERY_REPORTED') return 'ai';
-  if (s === 'RESOLVED' || s === 'PAYOUT_FAILED' || s === 'EXPIRED_REFUNDED') return 'done';
+  if (
+    s === 'RESOLVED' ||
+    s === 'PAYOUT_FAILED' ||
+    s === 'EXPIRED_REFUNDED' ||
+    s === 'SELLER_TIMEOUT_PAID'
+  ) {
+    return 'done';
+  }
   return 'create';
 }
 
@@ -217,36 +224,42 @@ export function nextActionHint({ status, isBuyer, isSeller, seller = '', buyer =
     if (isSeller) {
       return {
         title: 'Your turn — confirm shipment',
-        body: 'Paste at least 1 origin-condition URL (click Example), then Confirm shipment. The buyer wallet cannot do this step.',
+        body: 'Paste ≥1 origin URL and ≥2 independent reference URLs (carrier/customs — click Example). These references are locked; the buyer cannot change them later.',
       };
     }
     return {
       title: 'Next: seller confirms shipment',
-      body: `This wallet is the buyer. In MetaMask switch to the seller ${seller || 'wallet'}, then click Refresh. Origin URL fields and Confirm shipment appear only for the seller.`,
+      body: `This wallet is the buyer. Switch MetaMask to seller ${seller || 'wallet'}, then Refresh. The seller must pin origin + independent references.`,
     };
   }
   if (s === 'SHIPPED' || s === 'DISPUTED') {
     if (isBuyer) {
       return {
-        title: s === 'DISPUTED' ? 'Your turn — report stronger evidence' : 'Your turn — report delivery',
-        body: 'Paste 1 delivery URL and 2 reference URLs (click Example on each), then Report delivery.',
+        title: s === 'DISPUTED' ? 'Your turn — stronger delivery evidence' : 'Your turn — report delivery',
+        body: 'Paste ≥1 delivery evidence URL only (click Example). Seller-pinned references stay locked and decide the AI verdict.',
       };
     }
     return {
-      title: 'Next: buyer reports delivery',
-      body: `Switch MetaMask to the buyer ${buyer || 'wallet'}, then click Refresh. Report delivery is buyer-only.`,
+      title: s === 'SHIPPED' ? 'Waiting for buyer report' : 'Disputed — waiting on buyer',
+      body: `Buyer ${buyer || 'wallet'} must report delivery evidence. After the report deadline, the seller can claim full escrow if the buyer never reported.`,
     };
   }
   if (s === 'DELIVERY_REPORTED') {
     return {
       title: 'Next: request AI adjudication',
-      body: 'Keep this tab open for 2–5 minutes. Either party can start it. If it stays on DELIVERY_REPORTED, replace URLs with the Example chips and report again.',
+      body: 'Keep this tab open 2–5 minutes. AI prioritizes seller-pinned references. Irrelevant/failed pages become DISPUTED — not an automatic buyer refund.',
     };
   }
   if (s === 'PAYOUT_FAILED') {
     return {
       title: 'Payout incomplete',
       body: 'Buyer or seller can retry the unpaid side. AI will not run again.',
+    };
+  }
+  if (s === 'SELLER_TIMEOUT_PAID') {
+    return {
+      title: 'Order finished',
+      body: 'Buyer never reported delivery before the deadline. Full escrow paid to the seller.',
     };
   }
   if (s === 'RESOLVED' || s === 'EXPIRED_REFUNDED') {
@@ -257,6 +270,6 @@ export function nextActionHint({ status, isBuyer, isSeller, seller = '', buyer =
   }
   return {
     title: 'Create an order',
-    body: 'Buyer locks GEN, then the seller confirms shipment.',
+    body: 'Buyer locks GEN and sets ship + report deadlines. Seller then pins neutral references at shipment.',
   };
 }

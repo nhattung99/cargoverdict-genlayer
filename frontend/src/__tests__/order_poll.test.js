@@ -106,6 +106,7 @@ async function runOrderPollTests() {
   assertEqual(flowCurrentStep('SHIPPED'), 'report', 'shipped waits on buyer report');
   assertEqual(flowCurrentStep('DELIVERY_REPORTED'), 'ai', 'reported waits on AI');
   assertEqual(flowCurrentStep('RESOLVED'), 'done', 'resolved is finished');
+  assertEqual(flowCurrentStep('SELLER_TIMEOUT_PAID'), 'done', 'seller timeout is finished');
   assert(FLOW_STEPS.length === 4, 'four visible flow steps');
 
   const buyerWait = nextActionHint({
@@ -122,7 +123,15 @@ async function runOrderPollTests() {
     isBuyer: false,
     isSeller: true,
   });
-  assert(sellerTurn.title.toLowerCase().includes('confirm shipment'), 'seller sees confirm shipment');
+  assert(sellerTurn.body.toLowerCase().includes('reference'), 'seller must pin references');
+
+  const buyerReport = nextActionHint({
+    status: 'SHIPPED',
+    isBuyer: true,
+    isSeller: false,
+  });
+  assert(buyerReport.body.toLowerCase().includes('delivery'), 'buyer reports delivery only');
+  assert(!buyerReport.body.toLowerCase().includes('2 reference'), 'buyer no longer picks references');
 
   console.log('All order poll / list tests passed.');
 }
