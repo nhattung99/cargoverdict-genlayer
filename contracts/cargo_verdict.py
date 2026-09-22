@@ -155,11 +155,13 @@ def _parse_verdict(raw) -> dict:
         }
 
     verdict = str(data.get("verdict", "")).strip().upper().replace(" ", "_")
-    if verdict not in VALID_VERDICTS:
+    # Empty verdict is reserved for the failed-reference / inconclusive dispute path.
+    # Any other unknown label is normalized to empty + confidence 0.
+    if verdict and verdict not in VALID_VERDICTS:
         return {
             "verdict": "",
             "confidence": 0,
-            "reason": "verdict must be DELIVERED_INTACT, DAMAGED, or NOT_DELIVERED — got: " + verdict,
+            "reason": "verdict must be DELIVERED_INTACT, DAMAGED, NOT_DELIVERED, or empty — got: " + verdict,
         }
 
     try:
@@ -169,11 +171,48 @@ def _parse_verdict(raw) -> dict:
     if conf < 0 or conf > 100:
         conf = 0
 
+    # Empty verdict must stay on the dispute branch (confidence below settle threshold).
+    if verdict == "":
+        conf = 0
+
     return {
         "verdict": verdict,
         "confidence": conf,
         "reason": str(data.get("reason", "")),
     }
+
+
+def _consensus_accepts(leader_verdict, leader_conf, my_verdict, my_conf) -> bool:
+    """
+    Validator-side agreement check.
+
+    Settle path: both conf >= MIN_CONFIDENCE and identical discrete verdict.
+    Dispute path: both conf < MIN_CONFIDENCE and identical verdict labels, including
+    the explicit empty-verdict response used when seller-pinned references fail.
+    Empty verdict is only valid below the settle threshold so it can never pay out.
+    """
+    try:
+        lc = int(leader_conf)
+        mc = int(my_conf)
+    except Exception:
+        return False
+    if not (0 <= lc <= 100 and 0 <= mc <= 100):
+        return False
+
+    lv = str(leader_verdict or "").strip().upper().replace(" ", "_")
+    mv = str(my_verdict or "").strip().upper().replace(" ", "_")
+
+    def _vote_ok(verdict: str, conf: int) -> bool:
+        if verdict in VALID_VERDICTS:
+            return True
+        # Failed-reference / inconclusive: empty verdict + dispute confidence.
+        return verdict == "" and conf < MIN_CONFIDENCE
+
+    if not _vote_ok(lv, lc) or not _vote_ok(mv, mc):
+        return False
+    if mv != lv:
+        return False
+    return (mc >= MIN_CONFIDENCE) == (lc >= MIN_CONFIDENCE)
 
 
 def _bound_page_text(text) -> str:
@@ -401,11 +440,14 @@ class Contract(gl.Contract):
             prompt += "2. Buyer delivery URLs alone must NEVER decide NOT_DELIVERED or force a refund.\n"
             prompt += "3. If any seller-pinned reference is FETCH_FAILED, empty, a generic parking page "
             prompt += "(Example Domain), or does not describe this shipment, you MUST return "
-            prompt += "confidence 0 with an empty verdict so the order stays disputed — do NOT invent "
-            prompt += "NOT_DELIVERED from missing/irrelevant pages.\n"
-            prompt += "4. NOT_DELIVERED requires affirmative non-delivery evidence in the seller-pinned references.\n\n"
+            prompt += "{\"verdict\": \"\", \"confidence\": 0, \"reason\": \"...\"} so validators agree on "
+            prompt += "DISPUTED — do NOT invent NOT_DELIVERED from missing/irrelevant pages.\n"
+            prompt += "4. NOT_DELIVERED requires affirmative non-delivery evidence in the seller-pinned references.\n"
+            prompt += "5. Empty verdict is only allowed with confidence 0 (dispute path). "
+            prompt += "Settling requires a non-empty discrete verdict and confidence >= 60.\n\n"
             prompt += "Return ONLY raw JSON, no markdown:\n"
-            prompt += "{\"verdict\": \"DELIVERED_INTACT\" | \"DAMAGED\" | \"NOT_DELIVERED\", \"confidence\": <0-100>, \"reason\": \"<short justification>\"}"
+            prompt += "{\"verdict\": \"DELIVERED_INTACT\" | \"DAMAGED\" | \"NOT_DELIVERED\" | \"\", "
+            prompt += "\"confidence\": <0-100>, \"reason\": \"<short justification>\"}"
 
             raw = gl.nondet.exec_prompt(prompt, response_format="json")
             return _parse_verdict(raw)
@@ -419,13 +461,8 @@ class Contract(gl.Contract):
                 return False
 
             leader_verdict = str(leader_payload.get("verdict", "")).strip().upper().replace(" ", "_")
-            if leader_verdict not in VALID_VERDICTS:
-                return False
-
             try:
                 leader_conf = int(leader_payload.get("confidence", -1))
-                if not (0 <= leader_conf <= 100):
-                    return False
             except Exception:
                 return False
 
@@ -437,16 +474,10 @@ class Contract(gl.Contract):
             my_verdict = str(my_res.get("verdict", "")).strip().upper().replace(" ", "_")
             try:
                 my_conf = int(my_res.get("confidence", -1))
-                if not (0 <= my_conf <= 100):
-                    return False
             except Exception:
                 return False
 
-            # Absolute equality on the 3 discrete verdicts — no % tolerance.
-            # Confidence branch must also match (>=60 settle vs DISPUTED).
-            if my_verdict != leader_verdict:
-                return False
-            return (my_conf >= MIN_CONFIDENCE) == (leader_conf >= MIN_CONFIDENCE)
+            return _consensus_accepts(leader_verdict, leader_conf, my_verdict, my_conf)
 
         result = _parse_verdict(_extract_result(gl.vm.run_nondet(leader_fn, validator_fn)))
 

@@ -187,6 +187,86 @@ def _patch_clock(contract, monkeypatch, ts):
     return False
 
 
+def _loaded_contract_mod(contract=None):
+    """Return the loaded cargo_verdict module after direct_deploy (exposes helpers)."""
+    import sys
+    for _name, mod in list(sys.modules.items()):
+        if mod is None:
+            continue
+        if callable(getattr(mod, "_consensus_accepts", None)) and hasattr(mod, "Order"):
+            return mod
+    if contract is not None:
+        inner = getattr(contract, "_contract", None) or getattr(contract, "__wrapped__", None)
+        target = inner or contract
+        meth = getattr(target, "resolve_order", None)
+        func = getattr(meth, "__func__", meth) if meth is not None else None
+        g = getattr(func, "__globals__", None) if func is not None else None
+        if g is not None and callable(g.get("_consensus_accepts")):
+            class _NS:
+                pass
+            ns = _NS()
+            ns._consensus_accepts = g["_consensus_accepts"]
+            ns._parse_verdict = g.get("_parse_verdict")
+            return ns
+    return None
+
+
+def test_consensus_accepts_failed_reference_empty_verdict(direct_vm, direct_deploy, direct_accounts):
+    """Empty verdict + conf 0 must be validator-valid (dispute), not rejected before DISPUTED."""
+    contract = direct_deploy(CONTRACT_PATH)
+    mod = _loaded_contract_mod(contract)
+    assert mod is not None, "cargo_verdict helpers not loaded"
+    accept = mod._consensus_accepts
+
+    # Corrected failed-reference consensus path: both votes empty + conf 0.
+    assert accept("", 0, "", 0) is True
+    assert accept("", 0, "", 41) is True  # both still below settle threshold
+    assert accept("", 0, "NOT_DELIVERED", 0) is False  # labels must match
+    assert accept("", 80, "", 80) is False  # empty cannot settle
+    assert accept("NOT_DELIVERED", 0, "NOT_DELIVERED", 0) is True  # low-conf matching settle labels → dispute
+    assert accept("DELIVERED_INTACT", 95, "DELIVERED_INTACT", 90) is True
+    assert accept("DELIVERED_INTACT", 95, "DAMAGED", 90) is False
+    assert accept("DELIVERED_INTACT", 95, "DELIVERED_INTACT", 40) is False  # conf branch mismatch
+
+
+def test_failed_reference_empty_verdict_consensus_reaches_disputed(direct_vm, direct_deploy, direct_accounts):
+    """End-to-end: seller-pinned fetch failure → empty/conf0 consensus → DISPUTED, no refund."""
+    buyer = direct_accounts[1]
+    seller = direct_accounts[2]
+    contract = direct_deploy(CONTRACT_PATH)
+    vm = _active_vm(direct_vm)
+
+    order_id = _create_order(contract, vm, buyer, seller)
+    _ship(contract, vm, seller, order_id)
+    _report(contract, vm, buyer, order_id)
+
+    sim_installMocks(
+        vm,
+        web={},  # every seller-pinned URL renders as FETCH_FAILED
+        llm={
+            "verdict": "",
+            "confidence": 0,
+            "reason": "seller-pinned references were FETCH_FAILED or irrelevant parking pages",
+        },
+    )
+    vm.sender = buyer
+    contract.resolve_order(order_id)
+
+    row = _order(contract, order_id)
+    assert row["status"] == "DISPUTED"
+    assert row["verdict"] == ""
+    assert int(row["confidence"]) == 0
+    assert row["buyer_refunded"] is False
+    assert row["seller_paid"] is False
+    # Buyer may re-report delivery evidence only; seller refs stay locked.
+    clearer = "https://example.org/clearer-unbox.jpg"
+    vm.sender = buyer
+    contract.report_delivery(order_id, [clearer])
+    assert _order(contract, order_id)["status"] == "DELIVERY_REPORTED"
+    assert REF1 in _order(contract, order_id)["reference_urls"]
+    assert REF2 in _order(contract, order_id)["reference_urls"]
+
+
 def test_happy_path_delivered_intact(direct_vm, direct_deploy, direct_accounts):
     buyer = direct_accounts[1]
     seller = direct_accounts[2]

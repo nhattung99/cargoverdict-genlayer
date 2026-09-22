@@ -64,7 +64,7 @@ No treasury hop. No value-forward bug.
    - Leader fetches seller-pinned references first, then origin and buyer delivery pages (`FETCH_FAILED` stays in the prompt — no rollback).
    - AI must prioritize seller-pinned references. Irrelevant / failed pages → confidence 0 → `DISPUTED` (not an automatic buyer refund).
    - Validator: absolute `verdict ==` and the same `confidence >= 60` branch.
-5. `confidence < 60` (or unparseable JSON) → `DISPUTED`. Buyer may re-report delivery evidence only.
+5. `confidence < 60`, empty verdict (failed seller-pinned refs), or unparseable JSON → `DISPUTED`. Validators accept empty verdict only with confidence below the settle threshold so consensus can reach dispute instead of rejecting the vote. Buyer may re-report delivery evidence only.
 6. Valid verdict → `_execute_settlement`:
    - `DELIVERED_INTACT` → seller gets `escrow_amount`
    - `DAMAGED` → seller gets `damaged_payout_to_seller`, buyer gets the remainder
