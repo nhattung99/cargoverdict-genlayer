@@ -22,8 +22,8 @@ https://cargoverdict-genlayer.vercel.app
 ## Deployed Contract
 
 - **Network:** studionet (GenLayer Studio hosted)
-- **Address:** `0x855bF008b7C50dCC46FdA31224458577bbA85c75`
-- **Explorer:** https://explorer-studio.genlayer.com/address/0x855bF008b7C50dCC46FdA31224458577bbA85c75
+- **Address:** `0x5ec1fb30BD0E5a57f615A8C0C36964572f5343df`
+- **Explorer:** https://explorer-studio.genlayer.com/address/0x5ec1fb30BD0E5a57f615A8C0C36964572f5343df
 
 If `VITE_CONTRACT_ADDRESS` is unset locally, the frontend still boots in preview mode (banner, no white crash) and writes stay disabled.
 

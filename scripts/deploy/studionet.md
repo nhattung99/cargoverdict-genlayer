@@ -10,7 +10,7 @@ Do **not** switch the app or wallet to Asimov/Bradbury testnet. This project sta
 6. Set it in `frontend/.env` as `VITE_CONTRACT_ADDRESS=0x...` and restart `npm run dev`.
 7. After handshake, the same address goes into Vercel production env, then rebuild.
 
-Live studionet address: `0x855bF008b7C50dCC46FdA31224458577bbA85c75`. Create a **new** order after each redeploy. Seller pins independent references at Confirm shipment; buyer only adds delivery evidence.
+Live studionet address: `0x5ec1fb30BD0E5a57f615A8C0C36964572f5343df`. Create a **new** order after each redeploy. Seller pins independent references at Confirm shipment; buyer only adds delivery evidence.
 
 Fund the buyer/seller wallets from the Studio **Accounts** panel. Do not use `testnet-faucet.genlayer.foundation` — that faucet credits a different chain.
 
